@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- Bump version to `0.1.1` to verify automated PR validation, multi-arch GHCR publishing, and Home Assistant Supervisor automatic update detection.
+
 ## 0.1.0
 
 - Initial release of the Hello World starter app (`amd64` and `aarch64`).
