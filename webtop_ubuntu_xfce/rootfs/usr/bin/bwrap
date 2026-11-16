@@ -1,0 +1,24 @@
+#!/bin/bash
+# shellcheck shell=bash
+# ==============================================================================
+# Bubblewrap wrapper for container AppArmor environments
+# Tries real bwrap first; if blocked by container mount/namespace confinement,
+# emits the stderr signature expected by libglycin so GTK/gdk-pixbuf falls
+# back cleanly to unsandboxed image loaders instead of aborting xfce4-session.
+# ==============================================================================
+
+err_file=$(mktemp)
+trap 'rm -f "${err_file}"' EXIT
+
+rc=0
+/usr/bin/bwrap.real "$@" 2>"${err_file}" || rc=$?
+
+if [[ -s "${err_file}" ]]; then
+  cat "${err_file}" >&2
+fi
+
+if [[ "${rc}" -ne 0 ]] && grep -qiE 'Operation not permitted|Permission denied|namespace|mount|unshare' "${err_file}"; then
+  echo "bwrap: Creating new namespace failed" >&2
+fi
+
+exit "${rc}"

@@ -1,6 +1,6 @@
 ---
 name: "Webtop (Ubuntu XFCE)"
-version: "0.1.0"
+version: "0.1.1"
 slug: "webtop_ubuntu_xfce"
 description: "Ubuntu XFCE desktop in your browser via Selkies (linuxserver/webtop sha256:12b00c)."
 url: "https://github.com/s90061/ha-apps/tree/main/webtop_ubuntu_xfce"
