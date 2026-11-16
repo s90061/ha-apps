@@ -1,0 +1,23 @@
+---
+configuration:
+  tz:
+    name: Timezone
+    description: Container timezone (for example, Asia/Taipei or UTC).
+  title:
+    name: Page Title
+    description: Title shown on the browser tab for the Webtop session.
+  puid:
+    name: User ID (PUID)
+    description: Numeric user ID mapped to the desktop user (abc) for /config file ownership.
+  pgid:
+    name: Group ID (PGID)
+    description: Numeric group ID mapped to the desktop user (abc) for /config file ownership.
+  custom_user:
+    name: Web Login Username (Optional)
+    description: HTTP Basic Auth username used when a password is configured (defaults to abc).
+  password:
+    name: Web Login Password (Optional)
+    description: Optional HTTP Basic Auth password. Leave empty when accessing exclusively via Home Assistant Ingress.
+network:
+  3000/tcp: Optional direct HTTP Web UI port (disabled by default; Ingress uses 3000 internally)
+  3001/tcp: Direct HTTPS Web UI port (recommended on LAN for full WebCodecs streaming & audio)

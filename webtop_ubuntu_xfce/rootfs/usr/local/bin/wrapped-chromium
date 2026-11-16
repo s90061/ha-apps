@@ -1,0 +1,17 @@
+#!/bin/bash
+# shellcheck shell=bash
+# ==============================================================================
+# Chromium wrapper disabling /dev/shm usage for Home Assistant 64MB shm default
+# ==============================================================================
+
+BIN=/usr/bin/chromium
+
+if ! pgrep chromium > /dev/null; then
+  rm -f "${HOME}/.config/chromium/Singleton"*
+fi
+
+if grep -q 'Seccomp:.0' /proc/1/status; then
+  exec "${BIN}" --password-store=basic --disable-dev-shm-usage "$@"
+else
+  exec "${BIN}" --password-store=basic --no-sandbox --disable-dev-shm-usage --test-type "$@"
+fi

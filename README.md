@@ -26,6 +26,12 @@
 
 最小可運作的範本 App（使用 `ghcr.io/home-assistant/base` 與 `s6-overlay v3`），可透過 UI 設定訊息與週期輸出至日誌，用來驗證容器啟動、中英文設定介面與自動更新流程。
 
+#### [Webtop (Ubuntu XFCE)](./webtop_ubuntu_xfce)
+
+![Supports aarch64 Architecture][aarch64-shield]
+
+封裝 `linuxserver/webtop:ubuntu-xfce`（嚴格釘選 `aarch64` digest `sha256:12b00cce8f60ee8f4553f2726d35c5d48d34d6c87513b1044a20619a0a2e3c3b`），支援 Home Assistant Ingress 側邊欄與 HTTPS `3001` 直連桌面，並自動整合 `/config`（`app_config:rw`）、`/share`、UI 設定欄位與 Chromium `--disable-dev-shm-usage`。
+
 ### 開發與維護規範（防呆說明）
 
 * **`main` 分支僅作穩定發布**：請在開發分支修改與測試後再開 PR 合併至 `main`。合併時若要觸發 Home Assistant 更新與 GHCR 重新建置，請務必同步更新 `<app>/config.yaml` 的 `version` 字串（例如 `"0.1.1"`）與 `CHANGELOG.md`。
@@ -53,6 +59,7 @@ A public multi-app repository compliant with Home Assistant Supervisor standards
 ### Included Apps
 
 * **[Hello World](./hello_world)** — Minimal starter app using Home Assistant Alpine Base + `s6-overlay v3` + `bashio`, with localized English & Traditional Chinese configuration UI.
+* **[Webtop (Ubuntu XFCE)](./webtop_ubuntu_xfce)** — Ubuntu XFCE browser desktop (`linuxserver/webtop:ubuntu-xfce`, pinned `aarch64` digest) with HA Ingress, optional HTTPS port `3001`, persistent `app_config` (`/config`), and localized options.
 
 ### Adding a New App
 

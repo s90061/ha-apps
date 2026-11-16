@@ -1,0 +1,35 @@
+---
+name: "Webtop (Ubuntu XFCE)"
+version: "0.1.0"
+slug: "webtop_ubuntu_xfce"
+description: "Ubuntu XFCE desktop in your browser via Selkies (linuxserver/webtop sha256:12b00c)."
+url: "https://github.com/s90061/ha-apps/tree/main/webtop_ubuntu_xfce"
+arch:
+  - aarch64
+init: false
+ingress: true
+ingress_port: 3000
+panel_icon: "mdi:desktop-classic"
+panel_title: "Webtop XFCE"
+ports:
+  3000/tcp: null
+  3001/tcp: 3001
+ports_description:
+  3000/tcp: "Web UI (HTTP - optional direct access; Ingress uses internal 3000)"
+  3001/tcp: "Web UI (HTTPS - recommended direct LAN access for WebCodecs)"
+map:
+  - app_config:rw
+  - share:rw
+options:
+  tz: "Asia/Taipei"
+  title: "Ubuntu XFCE"
+  puid: 1000
+  pgid: 1000
+schema:
+  tz: "str"
+  title: "str"
+  puid: "int(0,65535)"
+  pgid: "int(0,65535)"
+  custom_user: "str?"
+  password: "password?"
+image: "ghcr.io/s90061/ha-apps-webtop_ubuntu_xfce"
