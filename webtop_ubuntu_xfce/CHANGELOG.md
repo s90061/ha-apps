@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- Fix `xfce4-session` startup crash (`Aborted (core dumped)`) caused by `libglycin-2` / `bwrap` sandbox failure under Home Assistant's default AppArmor profile by adding a `/usr/bin/bwrap` fallback wrapper so `libglycin` cleanly degrades to unsandboxed image decoding when blocked.
+- Explicitly pin base tag `lscr.io/linuxserver/webtop:ubuntu-xfce-76362218-ls10@sha256:12b00cce8f60ee8f4553f2726d35c5d48d34d6c87513b1044a20619a0a2e3c3b`.
+- Set `DISABLE_DRI3=true` by default so Xvfb does not fail probing `/dev/dri/renderD128` without device cgroup access.
+- Retain `xfce4-session` startup logs in `/config/.local/state/xfce4-session.log` instead of discarding to `/dev/null`.
+
 ## 0.1.0
 
 - Initial Home Assistant App release wrapping `linuxserver/webtop:ubuntu-xfce` (`sha256:12b00cce8f60ee8f4553f2726d35c5d48d34d6c87513b1044a20619a0a2e3c3b`, `aarch64`).
