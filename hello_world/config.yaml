@@ -1,6 +1,6 @@
 ---
 name: "Hello World"
-version: "0.1.0"
+version: "0.1.1"
 slug: "hello_world"
 description: "Minimal Home Assistant App verifying LF scripts, s6-overlay v3, and automatic updates."
 url: "https://github.com/s90061/ha-apps/tree/main/hello_world"
