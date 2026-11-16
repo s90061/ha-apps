@@ -1,0 +1,13 @@
+# OS and Editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+
+# Local environment and temporary files
+.env
+.env.*
+*.log
+*.bak

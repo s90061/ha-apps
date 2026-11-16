@@ -1,0 +1,124 @@
+---
+name: Builder
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      app:
+        description: "App directory name to build (or 'all')"
+        required: false
+        default: "all"
+        type: string
+      force_rebuild:
+        description: "Force rebuild and republish even if the version tag already exists"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  init:
+    name: Initialize builds
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.filter.outputs.changed }}
+      changed_apps: ${{ steps.filter.outputs.changed_apps }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Find app directories
+        id: apps
+        uses: home-assistant/actions/helpers/find-addons@master
+
+      - name: Determine apps to build
+        id: filter
+        env:
+          APPS: ${{ steps.apps.outputs.addons }}
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_APP: ${{ inputs.app || 'all' }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          read -r -a all_apps <<< "${APPS}"
+          changed_apps=()
+
+          if [[ ${#all_apps[@]} -eq 0 ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if [[ "${DISPATCH_APP}" == "all" || -z "${DISPATCH_APP}" ]]; then
+              changed_apps=("${all_apps[@]}")
+            else
+              matched=false
+              for app in "${all_apps[@]}"; do
+                if [[ "${app}" == "${DISPATCH_APP}" ]]; then
+                  changed_apps+=("${app}")
+                  matched=true
+                  break
+                fi
+              done
+              if [[ "${matched}" != "true" ]]; then
+                echo "::error::Unknown app '${DISPATCH_APP}'. Available: ${APPS}"
+                exit 1
+              fi
+            fi
+          elif [[ "${EVENT_NAME}" == "push" ]] && ([[ "${BEFORE_SHA}" == "0000000000000000000000000000000000000000" ]] || ! git rev-parse --verify "${BEFORE_SHA}" >/dev/null 2>&1); then
+            changed_apps=("${all_apps[@]}")
+          else
+            if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+              diff_files=$(git diff --name-only "${PR_BASE_SHA}" HEAD)
+            else
+              diff_files=$(git diff --name-only "${BEFORE_SHA}..${CURRENT_SHA}")
+            fi
+
+            if grep -qE '^\.github/workflows/(builder|build-app)\.yaml$' <<< "${diff_files}"; then
+              changed_apps=("${all_apps[@]}")
+            else
+              for app in "${all_apps[@]}"; do
+                if grep -qE "^${app}/(config\.(json|ya?ml)|Dockerfile|rootfs/)" <<< "${diff_files}"; then
+                  changed_apps+=("${app}")
+                fi
+              done
+            fi
+          fi
+
+          if [[ ${#changed_apps[@]} -gt 0 ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "changed_apps=$(jq -nc '$ARGS.positional' --args "${changed_apps[@]}")" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-app:
+    name: Build ${{ matrix.app }}
+    needs: init
+    if: needs.init.outputs.changed == 'true'
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.init.outputs.changed_apps) }}
+    uses: ./.github/workflows/build-app.yaml
+    with:
+      app: ${{ matrix.app }}
+      publish: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') }}
+      force_rebuild: ${{ github.event_name == 'workflow_dispatch' && inputs.force_rebuild }}
+    secrets: inherit

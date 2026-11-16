@@ -1,0 +1,8 @@
+---
+configuration:
+  message:
+    name: Message
+    description: The message printed periodically to the app log.
+  interval_seconds:
+    name: Interval (seconds)
+    description: How often (5-86400 seconds) to print the log message.

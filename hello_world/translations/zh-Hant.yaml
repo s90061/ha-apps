@@ -1,0 +1,8 @@
+---
+configuration:
+  message:
+    name: 顯示訊息
+    description: 週期性輸出至應用程式日誌的訊息內容。
+  interval_seconds:
+    name: 輸出間隔（秒）
+    description: 每隔幾秒輸出一次日誌訊息（支援範圍 5 至 86400 秒）。

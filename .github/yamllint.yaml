@@ -1,0 +1,23 @@
+---
+extends: default
+
+rules:
+  document-start:
+    present: true
+  empty-lines:
+    max: 1
+    max-start: 0
+    max-end: 1
+  indentation:
+    spaces: 2
+    indent-sequences: true
+    check-multi-line-strings: false
+  line-length: disable
+  new-line-at-end-of-file:
+    level: error
+  new-lines:
+    type: unix
+  trailing-spaces:
+    level: error
+  truthy:
+    check-keys: false

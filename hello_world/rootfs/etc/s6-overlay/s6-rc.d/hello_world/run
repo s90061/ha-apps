@@ -1,0 +1,57 @@
+#!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Start the hello_world service
+# ==============================================================================
+
+declare message="Hello from S90061 Home Assistant Apps!"
+declare interval="60"
+declare app_version="${APP_VERSION:-dev}"
+declare sleep_pid=""
+declare running="true"
+declare cfg_message=""
+declare cfg_interval=""
+
+handle_signal() {
+  running="false"
+  if [[ -n "${sleep_pid}" ]]; then
+    kill "${sleep_pid}" 2>/dev/null || true
+  fi
+}
+
+trap handle_signal TERM INT
+
+if [[ -n "${SUPERVISOR_TOKEN:-}" ]]; then
+  if bashio::config.has_value 'message'; then
+    message="$(bashio::config 'message')"
+  fi
+  if bashio::config.has_value 'interval_seconds'; then
+    interval="$(bashio::config 'interval_seconds')"
+  fi
+elif [[ -r /data/options.json ]]; then
+  cfg_message="$(jq -r '.message // empty' /data/options.json)"
+  if [[ -n "${cfg_message}" ]]; then
+    message="${cfg_message}"
+  fi
+  cfg_interval="$(jq -r '.interval_seconds // empty' /data/options.json)"
+  if [[ -n "${cfg_interval}" ]]; then
+    interval="${cfg_interval}"
+  fi
+fi
+
+if ! [[ "${interval}" =~ ^[0-9]+$ ]] || [[ "${interval}" -lt 5 ]] || [[ "${interval}" -gt 86400 ]]; then
+  bashio::log.warning "Invalid interval_seconds '${interval}', falling back to 60s"
+  interval="60"
+fi
+
+bashio::log.info "Starting Hello World app (version ${app_version}) with interval ${interval}s"
+
+while [[ "${running}" == "true" ]]; do
+  bashio::log.info "[v${app_version}] ${message}"
+  sleep "${interval}" &
+  sleep_pid="$!"
+  wait "${sleep_pid}" 2>/dev/null || true
+  sleep_pid=""
+done
+
+bashio::log.info "Hello World app stopped cleanly"

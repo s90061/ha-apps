@@ -1,0 +1,61 @@
+#!/bin/sh
+# Pre-commit hook enforcing Unix LF line endings and executable permissions
+# on staged scripts so Linux containers never fail at startup.
+
+set -eu
+
+status=0
+
+staged_files=$(git diff --cached --name-only --diff-filter=ACM)
+if [ -z "$staged_files" ]; then
+  exit 0
+fi
+
+# Handle paths safely using newline iteration
+OLD_IFS="$IFS"
+IFS='
+'
+for file in $staged_files; do
+  # Skip files marked binary in .gitattributes
+  attr_binary=$(git check-attr binary -- "$file" 2>/dev/null || true)
+  case "$attr_binary" in
+    *": set")
+      continue
+      ;;
+  esac
+
+  # Verify staged blob and working tree copy contain no CR (0x0d) bytes
+  blob_orig=$(git show ":$file" | wc -c)
+  blob_stripped=$(git show ":$file" | LC_ALL=C tr -d '\r' | wc -c)
+  if [ "$blob_orig" -ne "$blob_stripped" ]; then
+    printf 'ERROR: CRLF detected in staged blob: %s\n' "$file" >&2
+    printf '       Convert to Unix LF before committing.\n' >&2
+    status=1
+  elif [ -f "$file" ]; then
+    wt_orig=$(wc -c < "$file")
+    wt_stripped=$(LC_ALL=C tr -d '\r' < "$file" | wc -c)
+    if [ "$wt_orig" -ne "$wt_stripped" ]; then
+      printf 'ERROR: CRLF detected in working tree file: %s\n' "$file" >&2
+      printf '       Normalize working copy to Unix LF (e.g. git add --renormalize) so local Docker builds do not copy CRLF.\n' >&2
+      status=1
+    fi
+  fi
+
+  # Verify any staged file with a shebang (#!) has Git index mode 100755
+  first_two=$(git show ":$file" | head -c 2 || true)
+  if [ "$first_two" = "#!" ]; then
+    mode=$(git ls-files --stage -- "$file" | awk 'NR==1 {print $1}')
+    if [ "$mode" != "100755" ]; then
+      printf 'ERROR: Script "%s" starts with "#!" but Git mode is "%s" (expected 100755).\n' "$file" "$mode" >&2
+      printf '       Run: git update-index --chmod=+x "%s"\n' "$file" >&2
+      status=1
+    fi
+  fi
+done
+IFS="$OLD_IFS"
+
+if [ "$status" -ne 0 ]; then
+  printf '\nCommit blocked by .githooks/pre-commit.\n' >&2
+fi
+
+exit "$status"

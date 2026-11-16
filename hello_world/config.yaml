@@ -1,0 +1,17 @@
+---
+name: "Hello World"
+version: "0.1.0"
+slug: "hello_world"
+description: "Minimal Home Assistant App verifying LF scripts, s6-overlay v3, and automatic updates."
+url: "https://github.com/s90061/ha-apps/tree/main/hello_world"
+arch:
+  - aarch64
+  - amd64
+init: false
+options:
+  message: "Hello from S90061 Home Assistant Apps!"
+  interval_seconds: 60
+schema:
+  message: "str"
+  interval_seconds: "int(5,86400)"
+image: "ghcr.io/s90061/ha-apps-hello_world"

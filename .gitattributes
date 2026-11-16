@@ -1,0 +1,38 @@
+# Enforce LF line endings for all text files so Linux containers and
+# extensionless s6-overlay scripts never fail when developed on Windows.
+* text=auto eol=lf
+
+# Explicitly lock scripts, containerfiles, and configs to LF
+*.sh text eol=lf
+*.bash text eol=lf
+*.py text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+Dockerfile text eol=lf
+.editorconfig text eol=lf
+.gitattributes text eol=lf
+.gitignore text eol=lf
+LICENSE text eol=lf
+pre-commit text eol=lf
+run text eol=lf
+finish text eol=lf
+type text eol=lf
+
+# Mark binary assets explicitly so Git never alters bytes
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
