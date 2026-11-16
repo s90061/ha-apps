@@ -1,0 +1,23 @@
+---
+configuration:
+  tz:
+    name: 時區（TZ）
+    description: 容器內系統時區（例如 Asia/Taipei 或 UTC）。
+  title:
+    name: 網頁標題（TITLE）
+    description: 顯示於瀏覽器分頁上的桌面標題名稱。
+  puid:
+    name: 使用者 ID（PUID）
+    description: 對應容器桌面帳號 abc 的 UID，用於 /config 檔案權限。
+  pgid:
+    name: 群組 ID（PGID）
+    description: 對應容器桌面帳號 abc 的 GID，用於 /config 檔案權限。
+  custom_user:
+    name: 網頁登入帳號（選填）
+    description: 設定密碼時使用的 HTTP Basic Auth 帳號（未填則預設為 abc）。
+  password:
+    name: 網頁登入密碼（選填）
+    description: 選填 HTTP Basic Auth 密碼；若僅透過 Home Assistant Ingress 登入可留空。
+network:
+  3000/tcp: 選填 HTTP 直連埠（預設不對外映射，Ingress 內部走 3000）
+  3001/tcp: HTTPS 直連埠（區網使用可獲得完整 WebCodecs 與音效支援）
