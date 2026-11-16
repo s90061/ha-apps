@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- Disable Selkies HiDPI (`SELKIES_USE_CSS_SCALING=true`) by default so the stream runs at 96 DPI / 1x logical resolution with CSS scaling instead of 2x physical pixels; all other settings remain unchanged.
+
 ## 0.1.1
 
 - Fix `xfce4-session` startup crash (`Aborted (core dumped)`) caused by `libglycin-2` / `bwrap` sandbox failure under Home Assistant's default AppArmor profile by adding a `/usr/bin/bwrap` fallback wrapper so `libglycin` cleanly degrades to unsandboxed image decoding when blocked.

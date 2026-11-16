@@ -4,7 +4,8 @@ FROM lscr.io/linuxserver/webtop:ubuntu-xfce-76362218-ls10@sha256:12b00cce8f60ee8
 ARG BUILD_VERSION="dev"
 ENV APP_VERSION="${BUILD_VERSION}" \
     START_DOCKER="false" \
-    DISABLE_DRI3="true"
+    DISABLE_DRI3="true" \
+    SELKIES_USE_CSS_SCALING="true"
 
 # Preserve original bwrap binary before copying wrapper
 RUN mv /usr/bin/bwrap /usr/bin/bwrap.real
