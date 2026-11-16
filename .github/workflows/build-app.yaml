@@ -48,14 +48,23 @@ jobs:
           RAW_DESCRIPTION: ${{ steps.info.outputs.description }}
           RAW_URL: ${{ steps.info.outputs.url }}
         run: |
+          image=$(jq -r '. // empty' <<< "${RAW_IMAGE}")
+          version=$(jq -r '. // empty' <<< "${RAW_VERSION}")
+          name=$(jq -r '. // empty' <<< "${RAW_NAME}")
+          description=$(jq -r '. // empty' <<< "${RAW_DESCRIPTION}")
+          if [[ -n "${RAW_URL}" ]]; then
+            url=$(jq -r '. // empty' <<< "${RAW_URL}")
+          else
+            url=""
+          fi
           {
-            echo "image_name=${RAW_IMAGE##*/}"
-            echo "registry_prefix=${RAW_IMAGE%/*}"
-            echo "version=${RAW_VERSION}"
-            echo "name=${RAW_NAME}"
-            echo "description=${RAW_DESCRIPTION}"
-            if [[ -n "${RAW_URL}" && "${RAW_URL}" != "null" ]]; then
-              echo "url=${RAW_URL}"
+            echo "image_name=${image##*/}"
+            echo "registry_prefix=${image%/*}"
+            echo "version=${version}"
+            echo "name=${name}"
+            echo "description=${description}"
+            if [[ -n "${url}" ]]; then
+              echo "url=${url}"
             fi
           } >> "$GITHUB_OUTPUT"
 

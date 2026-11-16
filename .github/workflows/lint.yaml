@@ -188,6 +188,6 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Run Home Assistant App Linter
-        uses: frenck/action-app-linter@v2.9.0
+        uses: frenck/action-app-linter@v2.21.2
         with:
           path: "./${{ matrix.path }}"
