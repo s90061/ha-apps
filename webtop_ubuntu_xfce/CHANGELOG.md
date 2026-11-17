@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3
+
+- Preinstall complete Traditional Chinese fonts (`fonts-noto-cjk`, `fonts-noto-cjk-extra`, `fonts-wqy-zenhei`) and Ubuntu Traditional Chinese language packs (`language-pack-zh-hant`, `language-pack-gnome-zh-hant`) with a `Noto Sans CJK TC` fontconfig preference (`/etc/fonts/conf.d/64-language-selector-prefer.conf`).
+- Add `lc_all` option to the Home Assistant configuration UI (defaulting to `zh_TW.UTF-8`) and ensure `init-ha-options` executes before `init-nginx` and `init-selkies-config` so `LC_ALL`, `LANG`, and `LANGUAGE` apply across the desktop session.
+
 ## 0.1.2
 
 - Disable Selkies HiDPI (`SELKIES_USE_CSS_SCALING=true`) by default so the stream runs at 96 DPI / 1x logical resolution with CSS scaling instead of 2x physical pixels; all other settings remain unchanged.

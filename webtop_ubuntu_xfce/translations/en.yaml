@@ -6,6 +6,9 @@ configuration:
   title:
     name: Page Title
     description: Title shown on the browser tab for the Webtop session.
+  lc_all:
+    name: System Locale (LC_ALL)
+    description: Desktop language and locale (for example, zh_TW.UTF-8 or en_US.UTF-8).
   puid:
     name: User ID (PUID)
     description: Numeric user ID mapped to the desktop user (abc) for /config file ownership.
