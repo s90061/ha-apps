@@ -21,6 +21,7 @@ This app packages `linuxserver/webtop:ubuntu-xfce` (`sha256:12b00cce8f60ee8f4553
 | --- | --- | --- | --- |
 | `tz` | `str` | `Asia/Taipei` | Container timezone (e.g. `Asia/Taipei`, `UTC`). |
 | `title` | `str` | `Ubuntu XFCE` | Browser tab and manifest title. |
+| `lc_all` | `str` | `zh_TW.UTF-8` | Desktop language and locale (`LC_ALL`, `LANG`, `LANGUAGE`). |
 | `puid` | `int(0,65535)` | `1000` | UID mapped to desktop user `abc` for `/config` ownership. |
 | `pgid` | `int(0,65535)` | `1000` | GID mapped to desktop user `abc` for `/config` ownership. |
 | `custom_user` | `str?` | _(unset)_ | Optional HTTP Basic Auth username when `password` is set (defaults to `abc` if omitted). |
@@ -29,5 +30,8 @@ This app packages `linuxserver/webtop:ubuntu-xfce` (`sha256:12b00cce8f60ee8f4553
 ## Home Assistant Compatibility Adjustments
 
 * `START_DOCKER` defaults to `false` to prevent nested Docker daemon startup inside an unprivileged app container.
+* `DISABLE_DRI3` defaults to `true` and `SELKIES_USE_CSS_SCALING` defaults to `true` (disabling HiDPI for smooth Raspberry Pi / Ingress streaming).
+* A `/usr/bin/bwrap` compatibility wrapper falls back cleanly when Home Assistant's default AppArmor profile blocks bubblewrap sandboxing for `libglycin`, preventing XFCE session aborts.
+* Traditional Chinese fonts (`fonts-noto-cjk`, `fonts-noto-cjk-extra`, `fonts-wqy-zenhei`), `language-pack-zh-hant`, `language-pack-gnome-zh-hant`, and a `Noto Sans CJK TC` fontconfig preference are baked into the image with `LC_ALL=zh_TW.UTF-8` as the default.
 * IPv6 support is auto-detected at boot; if unavailable inside the container network, `DISABLE_IPV6=true` is set automatically so Nginx starts cleanly.
-* `wrapped-chromium` appends `--disable-dev-shm-usage` to prevent tab crashes caused by Supervisor's default 64 MB `/dev/shm`.
+* `wrapped-chromium` appends `--disable-dev-shm-usage` to prevent tab crashes under tight `/dev/shm` constraints.

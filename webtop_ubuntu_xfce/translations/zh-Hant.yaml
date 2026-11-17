@@ -6,6 +6,9 @@ configuration:
   title:
     name: 網頁標題（TITLE）
     description: 顯示於瀏覽器分頁上的桌面標題名稱。
+  lc_all:
+    name: 系統語系（LC_ALL）
+    description: 容器與桌面介面語言（預設為 zh_TW.UTF-8 繁體中文，可改為 en_US.UTF-8 等）。
   puid:
     name: 使用者 ID（PUID）
     description: 對應容器桌面帳號 abc 的 UID，用於 /config 檔案權限。

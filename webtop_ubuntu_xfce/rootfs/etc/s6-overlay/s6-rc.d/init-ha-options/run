@@ -36,6 +36,7 @@ if not isinstance(data, dict):
 mapping = {
     "tz": "TZ",
     "title": "TITLE",
+    "lc_all": "LC_ALL",
     "puid": "PUID",
     "pgid": "PGID",
     "custom_user": "CUSTOM_USER",
@@ -46,8 +47,13 @@ for opt_key, env_key in mapping.items():
     if opt_key not in data or data[opt_key] is None:
         continue
     val = str(data[opt_key])
-    if opt_key in ("custom_user", "password", "tz", "title") and val.strip() == "":
+    if opt_key in ("custom_user", "password", "tz", "title", "lc_all") and val.strip() == "":
         continue
     (env_dir / env_key).write_bytes(val.encode("utf-8"))
+    if opt_key == "lc_all":
+        (env_dir / "LANG").write_bytes(val.encode("utf-8"))
+        lang_short = val.split(".", 1)[0]
+        if lang_short:
+            (env_dir / "LANGUAGE").write_bytes(lang_short.encode("utf-8"))
 PYEOF
 fi
