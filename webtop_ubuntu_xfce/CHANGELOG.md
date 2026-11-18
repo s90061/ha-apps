@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.6
+
+- Preinstall [WordCraft](https://github.com/storytold/wordcraft) (`v0.18.1`, SHA-256 verified `linux-aarch64.deb`, including `wordcraft` and `wordcraft-cli`) along with X11/Wayland/Mesa software GL, `xdg-desktop-portal`, and `zenity` dependencies for native `.docx`/`.odt`/PDF editing with direct `/share` access.
+- Add `/usr/bin/wordcraft` fallback wrapper (`LIBGL_ALWAYS_SOFTWARE=1`, `WGPU_BACKEND=gl`) when `DISABLE_DRI3=true` or `/dev/dri/renderD128` is unreadable so `wgpu` starts reliably without GPU passthrough or Raspberry Pi 5 shader-limit errors.
+
 ## 0.1.5
 
 - Preinstall native Firefox (`.deb` from `ppa:xtradeb/apps`) with Traditional Chinese localization (`firefox-locale-zh-hant`) alongside Chromium so Firefox launches natively with direct `/share/downloads` access.

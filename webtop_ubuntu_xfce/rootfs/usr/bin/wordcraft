@@ -1,0 +1,16 @@
+#!/bin/bash
+# shellcheck shell=bash
+# ==============================================================================
+# Launch WordCraft with Mesa software OpenGL fallback in headless/no-DRI3
+# Home Assistant containers (and avoid Pi 5 wgpu shader variable limit #3565).
+# ==============================================================================
+
+if [[ -z "${WGPU_BACKEND:-}" ]]; then
+  dri3="${DISABLE_DRI3:-}"
+  if [[ "${dri3,,}" == "true" || ! -r /dev/dri/renderD128 ]]; then
+    export LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}"
+    export WGPU_BACKEND="gl"
+  fi
+fi
+
+exec /usr/bin/wordcraft.real "$@"
