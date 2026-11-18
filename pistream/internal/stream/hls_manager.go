@@ -22,6 +22,7 @@ type HLSSession struct {
 	Mode           string
 	Quality        string
 	AudioTrack     int
+	LastSeekSeq    string
 	OutputDir      string
 	CurrentHeadSeg int
 	LastActive     time.Time
@@ -109,7 +110,7 @@ func (m *HLSManager) getOrCreateSession(sessionID string, media *db.MediaFile, m
 }
 
 // EnsureSegmentReady 確保請求的切片已就緒；若偵測到使用者拖拉時間軸，立即重啟 FFmpeg 跳轉至新時段
-func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, sessionID string, media *db.MediaFile, mode, quality string, audioTrack, segIndex int) (string, error) {
+func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, sessionID string, media *db.MediaFile, mode, quality string, audioTrack, segIndex int, seekSeq string) (string, error) {
 	sess := m.getOrCreateSession(sessionID, media, mode, quality, audioTrack)
 
 	targetSegPath := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", segIndex))
@@ -118,16 +119,24 @@ func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, sessionID string
 	sess.mu.Lock()
 	sess.LastActive = time.Now()
 
-	// 若切換了畫質或音軌，強制清除舊切片並重啟 FFmpeg
+	// 若切換了畫質或音軌，或前端觸發了跨緩衝區跳轉 (seekSeq 變更)，強制清除舊切片並重啟 FFmpeg
 	configChanged := sess.Mode != mode || sess.Quality != quality || sess.AudioTrack != audioTrack
-	if configChanged {
+	seekChanged := seekSeq != "" && seekSeq != sess.LastSeekSeq
+	if configChanged || seekChanged {
 		sess.Mode = mode
 		sess.Quality = quality
 		sess.AudioTrack = audioTrack
+		sess.LastSeekSeq = seekSeq
 		m.clearAllSegmentsLocked(sess)
 		m.restartFFmpegLocked(sess, segIndex)
 	} else {
-		if isSegmentComplete(targetSegPath, nextSegPath, sess.ProcessDone) {
+		maxForwardJump := 6
+		if mode == "remux" {
+			maxForwardJump = 1
+		}
+		isSeekJump := sess.CurrentHeadSeg >= 0 && (segIndex < sess.CurrentHeadSeg || (segIndex-sess.CurrentHeadSeg) > maxForwardJump)
+
+		if (!isSeekJump || mode != "remux") && isSegmentComplete(targetSegPath, nextSegPath, sess.ProcessDone) {
 			if segIndex > sess.CurrentHeadSeg {
 				sess.CurrentHeadSeg = segIndex
 				m.pruneOldSegmentsLocked(sess, segIndex)
@@ -136,11 +145,9 @@ func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, sessionID string
 			return targetSegPath, nil
 		}
 
-		// 若使用者向前跳轉，或向後跳轉超過 6 個切片 (24秒)，立即中止舊行程並從新位置啟動
 		needRestart := sess.Cmd == nil ||
 			isProcessExited(sess.ProcessDone) ||
-			segIndex < sess.CurrentHeadSeg ||
-			(segIndex-sess.CurrentHeadSeg) > 6
+			isSeekJump
 
 		if needRestart {
 			m.restartFFmpegLocked(sess, segIndex)

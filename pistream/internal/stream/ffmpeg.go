@@ -128,20 +128,38 @@ func BuildFFmpegArgs(p TranscodeParams) []string {
 
 	segPattern := filepath.Join(p.OutputDir, "seg_%05d.ts")
 
-	// 關鍵設定：-f hls 會忽略外部 -output_ts_offset 導致切片 PTS 歸零並把播放器拉回片頭；
-	// 改用 -f segment 並透過 -segment_format_options 將 output_ts_offset 傳給 mpegts muxer，
-	// 確保跳轉重啟 FFmpeg 產出的 .ts 切片內部 PTS 真正對齊完整時間軸。
-	args = append(args,
-		"-avoid_negative_ts", "make_zero",
-		"-muxdelay", "0",
-		"-muxpreload", "0",
-		"-f", "segment",
-		"-segment_time", strconv.Itoa(p.SegmentDur),
-		"-segment_start_number", strconv.Itoa(p.StartSegNumber),
-		"-segment_format", "mpegts",
-		"-segment_format_options", fmt.Sprintf("output_ts_offset=%.3f", p.StartTimeSec),
-		segPattern,
-	)
+	// 關鍵設定：
+	// 1. 在 remux (-c:v copy) 模式下，-noaccurate_seek -ss 會跳至目標秒數前的最近關鍵幀 K (K <= StartTimeSec)。
+	//    若使用 -avoid_negative_ts make_zero 搭配 output_ts_offset=StartTimeSec，會將關鍵幀 K 的畫面強行蓋上 StartTimeSec 的假時間戳，
+	//    導致影片實際播放 K 秒的畫面、但播放器時間軸與 WebVTT 字幕卻顯示 StartTimeSec，產生 1~10 秒的字幕提前錯位。
+	//    因此 remux 模式改用 -copyts -start_at_zero，直接保留原始影片關鍵幀 K 的真實 PTS 時間戳，讓影音與字幕 100% 精準對齊。
+	// 2. 在 transcode (重編碼) 模式下，FFmpeg 會精確由 StartTimeSec 開始輸出並每 SegmentDur 秒強制插入關鍵幀，
+	//    故使用 -avoid_negative_ts make_zero 搭配 -segment_format_options output_ts_offset 對齊時間軸。
+	if p.Mode == "remux" {
+		args = append(args,
+			"-copyts",
+			"-start_at_zero",
+			"-muxdelay", "0",
+			"-muxpreload", "0",
+			"-f", "segment",
+			"-segment_time", strconv.Itoa(p.SegmentDur),
+			"-segment_start_number", strconv.Itoa(p.StartSegNumber),
+			"-segment_format", "mpegts",
+			segPattern,
+		)
+	} else {
+		args = append(args,
+			"-avoid_negative_ts", "make_zero",
+			"-muxdelay", "0",
+			"-muxpreload", "0",
+			"-f", "segment",
+			"-segment_time", strconv.Itoa(p.SegmentDur),
+			"-segment_start_number", strconv.Itoa(p.StartSegNumber),
+			"-segment_format", "mpegts",
+			"-segment_format_options", fmt.Sprintf("output_ts_offset=%.3f", p.StartTimeSec),
+			segPattern,
+		)
+	}
 
 	return args
 }
