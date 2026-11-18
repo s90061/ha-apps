@@ -1,0 +1,50 @@
+---
+configuration:
+  tz:
+    name: 時區（TZ）
+    description: 容器內系統時區（例如 Asia/Taipei 或 UTC）。
+  incoming_dir:
+    name: 完成下載目錄（INCOMING_DIR）
+    description: 已完成檔案的存放路徑（預設 /share/amule/incoming，可設為 /share/...、/media/... 或 /config/...）。
+  temp_dir:
+    name: 暫存下載目錄（TEMP_DIR）
+    description: 下載中暫存檔路徑（預設 /share/amule/temp，建議與完成目錄位於同一掛載點以便快速搬移）。
+  puid:
+    name: 使用者 ID（PUID）
+    description: 執行 aMule 服務的 UID（用於 /config 與下載檔案擁有者權限）。
+  pgid:
+    name: 群組 ID（PGID）
+    description: 執行 aMule 服務的 GID（用於 /config 與下載檔案群組權限）。
+  umask:
+    name: 檔案權限遮罩（UMASK）
+    description: 新建檔案與資料夾的八進位權限遮罩（預設 0002）。
+  fix_permissions:
+    name: 啟動時修正下載目錄權限
+    description: 啟動時自動將 incoming_dir 與 temp_dir 設為 PUID:PGID 擁有（若掛載不支援 chown 的 NFS/SMB 請關閉）。
+  webui_pwd:
+    name: Web UI 管理員密碼（選填）
+    description: 登入 aMule Web UI 與 REST API 的管理員密碼；首次啟動若留空，系統會自動產生隨機密碼並輸出於應用程式日誌。
+  webui_guest_pwd:
+    name: Web UI 訪客密碼（選填）
+    description: 選填唯讀訪客帳號密碼；留空即可停用訪客登入。
+  gui_pwd:
+    name: 外部連線密碼（GUI_PWD，選填）
+    description: 供 amulegui / amulecmd 連線至 4712 埠使用的 External Connections 密碼；首次啟動留空則自動產生並記錄於日誌。
+  mod_auto_restart_enabled:
+    name: 啟用定時自動重啟
+    description: 依排程定時重啟 amuled 服務。
+  mod_auto_restart_cron:
+    name: 自動重啟 Cron 排程
+    description: 啟用定時自動重啟時使用的 Cron 表達式（預設每日 06:00："0 6 * * *"）。
+  mod_auto_share_enabled:
+    name: 啟用啟動自動分享目錄
+    description: 每次啟動時依設定清單覆寫遞迴分享目錄（啟用後會覆蓋 Web UI 內手動調整的分享設定）。
+  mod_auto_share_directories:
+    name: 自動分享目錄清單
+    description: 以分號（;）分隔的目錄路徑清單，在啟用自動分享時遞迴分享。
+network:
+  4662/tcp: ED2K 客戶端連線 TCP 埠（建議於路由器轉發以取得 High ID）
+  4665/udp: ED2K 伺服器 UDP 埠（固定為 TCP 埠 + 3，全域搜尋用）
+  4672/udp: 延伸 eMule 協定與 Kademlia UDP 埠
+  4711/tcp: Web UI 與 REST API 直連 HTTP 埠（預設不映射，優先使用 Home Assistant Ingress）
+  4712/tcp: External Connections 外部控制埠，供 amulegui / amulecmd 使用（預設不映射）
