@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- Fix `amuleapi` startup crash (`error 13: Permission denied` on `amuleapi.conf` and `amuleapi-jwt-secret`): upstream `fix_permissions()` ran `chown -R` without `-H`, so newly generated `0600` files inside `/home/amule/.aMule` (`/config` symlink) stayed owned by `root:root`. Patch `chown -R` to `chown -RH` in `/home/amule/amule-config.sh` so command-line symlinks are traversed cleanly.
+
 ## 0.1.0
 
 - Initial Home Assistant App release wrapping `ngosang/amule:3.2.0-1` (pinned multi-arch OCI digest `sha256:4b1a4246d57e7994b31c723b8c55474654e328c1b8eb0f9deb7f1843673bd515`, `aarch64` build).
