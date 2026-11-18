@@ -37,6 +37,7 @@ mapping = {
     "tz": "TZ",
     "title": "TITLE",
     "lc_all": "LC_ALL",
+    "download_dir": "DOWNLOAD_DIR",
     "puid": "PUID",
     "pgid": "PGID",
     "custom_user": "CUSTOM_USER",
@@ -47,7 +48,7 @@ for opt_key, env_key in mapping.items():
     if opt_key not in data or data[opt_key] is None:
         continue
     val = str(data[opt_key])
-    if opt_key in ("custom_user", "password", "tz", "title", "lc_all") and val.strip() == "":
+    if opt_key in ("custom_user", "password", "tz", "title", "lc_all", "download_dir") and val.strip() == "":
         continue
     (env_dir / env_key).write_bytes(val.encode("utf-8"))
     if opt_key == "lc_all":

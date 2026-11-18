@@ -9,6 +9,9 @@ configuration:
   lc_all:
     name: System Locale (LC_ALL)
     description: Desktop language and locale (for example, zh_TW.UTF-8 or en_US.UTF-8).
+  download_dir:
+    name: Downloads Directory
+    description: Target directory mapped from desktop Downloads (default /share/downloads to keep large downloads in Home Assistant /share and out of /config backups).
   puid:
     name: User ID (PUID)
     description: Numeric user ID mapped to the desktop user (abc) for /config file ownership.

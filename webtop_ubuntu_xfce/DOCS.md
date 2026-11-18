@@ -13,7 +13,7 @@ This app packages `linuxserver/webtop:ubuntu-xfce` (`sha256:12b00cce8f60ee8f4553
 ## Storage Persistence
 
 * **`/config` (`app_config:rw`)**: Persisted in `/addon_configs/webtop_ubuntu_xfce` on the Home Assistant host, surviving updates and included in Home Assistant backups.
-* **`/share` (`share:rw`)**: Shared with Home Assistant for easy file transfers.
+* **`/share` (`share:rw`)**: Shared with Home Assistant for easy file transfers; `/config/Downloads` and `/config/下載` (plus `XDG_DOWNLOAD_DIR`) automatically map to `/share/downloads` by default.
 
 ## Configuration Options
 
@@ -22,6 +22,7 @@ This app packages `linuxserver/webtop:ubuntu-xfce` (`sha256:12b00cce8f60ee8f4553
 | `tz` | `str` | `Asia/Taipei` | Container timezone (e.g. `Asia/Taipei`, `UTC`). |
 | `title` | `str` | `Ubuntu XFCE` | Browser tab and manifest title. |
 | `lc_all` | `str` | `zh_TW.UTF-8` | Desktop language and locale (`LC_ALL`, `LANG`, `LANGUAGE`). |
+| `download_dir` | `str` | `/share/downloads` | Target directory mapped from `/config/Downloads`, `/config/下載`, and `XDG_DOWNLOAD_DIR`. |
 | `puid` | `int(0,65535)` | `1000` | UID mapped to desktop user `abc` for `/config` ownership. |
 | `pgid` | `int(0,65535)` | `1000` | GID mapped to desktop user `abc` for `/config` ownership. |
 | `custom_user` | `str?` | _(unset)_ | Optional HTTP Basic Auth username when `password` is set (defaults to `abc` if omitted). |

@@ -8,7 +8,8 @@ ENV APP_VERSION="${BUILD_VERSION}" \
     SELKIES_USE_CSS_SCALING="true" \
     LC_ALL="zh_TW.UTF-8" \
     LANG="zh_TW.UTF-8" \
-    LANGUAGE="zh_TW"
+    LANGUAGE="zh_TW" \
+    DOWNLOAD_DIR="/share/downloads"
 
 # Install complete Traditional Chinese fonts and language packs, then preserve original bwrap binary
 RUN apt-get update && \
@@ -29,6 +30,7 @@ COPY rootfs /
 RUN chmod a+x \
     /defaults/startwm.sh \
     /etc/s6-overlay/s6-rc.d/init-ha-options/run \
+    /etc/s6-overlay/s6-rc.d/init-ha-downloads/run \
     /usr/bin/bwrap \
     /usr/local/bin/wrapped-chromium && \
     fc-cache -fv
