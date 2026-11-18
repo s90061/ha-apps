@@ -44,6 +44,13 @@
 
 專為 Raspberry Pi 5（`aarch64`）打造的輕量遠端影音伺服器，支援智慧三級串流（HTTP 206 原生直連、`-c:v copy` 免重編碼極速換殼、滑動視窗 HLS 省流轉碼）、外掛與內嵌字幕快取、多使用者獨立觀看進度，並同時支援 Home Assistant Ingress 側邊欄與 `8080` 直連埠（可直接讀取 `/media` 或 `/share/amule/incoming`）。
 
+#### [WordCraft](./wordcraft)
+
+![Supports aarch64 Architecture][aarch64-shield]
+![Supports amd64 Architecture][amd64-shield]
+
+封裝純 Rust 開源文書處理器 [`storytold/wordcraft`](https://github.com/storytold/wordcraft)（`v0.18.1` WebAssembly + WebGPU/WebGL2），提供完整 Ribbon 介面、`.docx` / `.odt` / `.rtf` / `.pdf` / `.md` 讀寫、追蹤修訂與目錄索引；所有渲染皆於瀏覽器端完成（樹莓派 0% CPU 負載），並整合 **HA 伺服器雲端文件庫（`/share/wordcraft`）** 與本機電腦上下載雙模式。
+
 ### 開發與維護規範（防呆說明）
 
 * **`main` 分支僅作穩定發布**：請在開發分支修改與測試後再開 PR 合併至 `main`。合併時若要觸發 Home Assistant 更新與 GHCR 重新建置，請務必同步更新 `<app>/config.yaml` 的 `version` 字串（例如 `"0.1.1"`）與 `CHANGELOG.md`。
@@ -74,6 +81,7 @@ A public multi-app repository compliant with Home Assistant Supervisor standards
 * **[Webtop (Ubuntu XFCE)](./webtop_ubuntu_xfce)** — Ubuntu XFCE browser desktop (`linuxserver/webtop:ubuntu-xfce`, pinned `aarch64` digest) with HA Ingress, optional HTTPS port `3001`, persistent `app_config` (`/config`), and localized options.
 * **[aMule](./amule)** — eMule / ED2K and Kademlia P2P client (`ngosang/amule:3.2.0-1`, `aarch64`) with HA Ingress cookie-rewriting proxy for `amuleapi` Web UI, persistent `/config`, `/share` and `/media` storage, and P2P port mappings.
 * **[PiStream](./pistream)** — Lightweight Raspberry Pi 5 media server (`aarch64`) with HTTP 206 Direct Play, zero-copy Remux, sliding-window HLS transcoding, HA Ingress + direct port `8080`, and read-only `/media` & `/share` integration.
+* **[WordCraft](./wordcraft)** — Pure-Rust word processor (`storytold/wordcraft` `v0.18.1`, `aarch64` & `amd64`) running via WebAssembly (`WebGPU` / `WebGL2`) with integrated Home Assistant server document library (`/share/wordcraft`) and local computer upload/download.
 
 ### Adding a New App
 
