@@ -15,12 +15,15 @@ RUN apt-get update && \
 # Copy Home Assistant entrypoint, Ingress nginx config, and s6 service
 COPY rootfs /
 
-# Guarantee executable permissions regardless of host filesystem
+# Guarantee executable permissions regardless of host filesystem, and use chown -RH so
+# upstream fix_permissions dereferences the /home/amule/.aMule -> /config symlink.
 RUN chmod a+x \
     /usr/local/bin/ha-entrypoint.sh \
     /etc/services.d/ingress-nginx/run \
     /etc/services.d/ingress-nginx/finish \
-    /etc/services.d/ingress-nginx/log/run
+    /etc/services.d/ingress-nginx/log/run && \
+    sed -i 's/chown -R /chown -RH /g' /home/amule/amule-config.sh && \
+    grep -q 'chown -RH ' /home/amule/amule-config.sh
 
 EXPOSE 8099/tcp 4711/tcp 4712/tcp 4662/tcp 4665/udp 4672/udp
 
