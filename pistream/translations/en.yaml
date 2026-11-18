@@ -1,0 +1,28 @@
+---
+configuration:
+  tz:
+    name: Timezone
+    description: Container timezone (for example, Asia/Taipei or UTC).
+  media_dir:
+    name: Media Library Directory
+    description: Root video folder inside the container (default /media; can be set to /media/..., /share/..., or /share/amule/incoming).
+  admin_user:
+    name: Admin Username
+    description: Default administrator username (default admin).
+  admin_password:
+    name: Admin Password (Optional)
+    description: Administrator login password (at least 4 characters). If left blank on first start, a random password is generated and printed in the app log; if set, it updates the admin password on startup.
+  jwt_secret:
+    name: JWT Signing Secret (Optional)
+    description: Secret key used to sign login tokens. Leave blank to auto-generate and persist in /config/.jwt_secret.
+  segment_duration:
+    name: HLS Segment Duration (Seconds)
+    description: Duration in seconds of each HLS segment (default 4, range 2-10).
+  max_keep_segments:
+    name: Sliding-Window Kept Segments
+    description: Number of recent HLS segments retained behind the playhead before automatic cleanup (default 10, range 4-60).
+  transcode_storage:
+    name: HLS Transcode Buffer Location
+    description: Choose auto (uses /dev/shm when >=256MB, otherwise /tmp/pistream_hls to avoid 64MB shm OOM on 4K Remux), shm (/dev/shm/pistream_hls), or tmp (/tmp/pistream_hls).
+network:
+  8080/tcp: Direct Web UI & zero-copy HTTP 206 streaming port (Ingress also uses internal 8080)
