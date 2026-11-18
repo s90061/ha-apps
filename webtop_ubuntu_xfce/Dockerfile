@@ -4,6 +4,10 @@ FROM lscr.io/linuxserver/webtop:ubuntu-xfce-76362218-ls10@sha256:12b00cce8f60ee8
 ARG BUILD_VERSION="dev"
 ARG WORDCRAFT_VERSION="0.18.1"
 ARG WORDCRAFT_DEB_SHA256="a6e7558d9b9c436c9b71df746af2bb36d8e498452af65115d17fddeeb28a9522"
+ARG GRIDCRAFT_VERSION="0.19.1"
+ARG GRIDCRAFT_DEB_SHA256="e029015bf646f05937f49c4c205fae75aabde73484967580b438a77e144e764f"
+ARG PDFCRAFT_VERSION="0.21.1"
+ARG PDFCRAFT_DEB_SHA256="2e1816b167a3678a7da984c3bd7cb7e43227ef35e1ba0f93c5234ac3e8edda86"
 ENV APP_VERSION="${BUILD_VERSION}" \
     START_DOCKER="false" \
     DISABLE_DRI3="true" \
@@ -27,7 +31,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* && \
     mv /usr/bin/bwrap /usr/bin/bwrap.real
 
-# Install WordCraft (.deb aarch64) with X11/Wayland/Mesa software GL and file-dialog deps, preserving original binary
+# Install Storytold suite (WordCraft, GridCraft, PdfCraft .deb aarch64) with X11/Wayland/Mesa software GL and file-dialog deps, preserving original binaries
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
         libegl1 \
@@ -46,26 +50,41 @@ RUN apt-get update && \
         libxrandr2 \
         xdg-desktop-portal \
         zenity && \
-    curl -fsSL -o /tmp/wordcraft.deb \
-        "https://github.com/storytold/wordcraft/releases/download/v${WORDCRAFT_VERSION}/wordcraft-${WORDCRAFT_VERSION}-linux-aarch64.deb" && \
-    echo "${WORDCRAFT_DEB_SHA256}  /tmp/wordcraft.deb" | sha256sum -c - && \
-    DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y /tmp/wordcraft.deb && \
-    rm -f /tmp/wordcraft.deb && \
+    for spec in \
+        "wordcraft:${WORDCRAFT_VERSION}:${WORDCRAFT_DEB_SHA256}" \
+        "gridcraft:${GRIDCRAFT_VERSION}:${GRIDCRAFT_DEB_SHA256}" \
+        "pdfcraft:${PDFCRAFT_VERSION}:${PDFCRAFT_DEB_SHA256}"; do \
+        app="${spec%%:*}"; \
+        rest="${spec#*:}"; \
+        ver="${rest%%:*}"; \
+        sha="${rest#*:}"; \
+        curl -fsSL -o "/tmp/${app}.deb" \
+            "https://github.com/storytold/${app}/releases/download/v${ver}/${app}-${ver}-linux-aarch64.deb"; \
+        echo "${sha}  /tmp/${app}.deb" | sha256sum -c -; \
+    done && \
+    DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+        /tmp/wordcraft.deb /tmp/gridcraft.deb /tmp/pdfcraft.deb && \
+    rm -f /tmp/wordcraft.deb /tmp/gridcraft.deb /tmp/pdfcraft.deb && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
-    mv /usr/bin/wordcraft /usr/bin/wordcraft.real
+    for app in wordcraft gridcraft pdfcraft; do \
+        mv "/usr/bin/${app}" "/usr/bin/${app}.real"; \
+    done
 
-# Copy Home Assistant options loader, fontconfig TC preference, bwrap/WordCraft wrappers, and Chromium wrapper
+# Copy Home Assistant options loader, fontconfig TC preference, bwrap/Storytold wrappers, and Chromium wrapper
 COPY rootfs /
 
-# Guarantee executable permissions regardless of host filesystem and refresh font cache
+# Guarantee executable permissions regardless of host filesystem, wire Storytold wrappers, and refresh font cache
 RUN chmod a+x \
     /defaults/startwm.sh \
     /etc/s6-overlay/s6-rc.d/init-ha-options/run \
     /etc/s6-overlay/s6-rc.d/init-ha-downloads/run \
     /usr/bin/bwrap \
-    /usr/bin/wordcraft \
+    /usr/local/bin/storytold-launch \
     /usr/local/bin/wrapped-chromium && \
+    for app in wordcraft gridcraft pdfcraft; do \
+        ln -sf /usr/local/bin/storytold-launch "/usr/bin/${app}"; \
+    done && \
     fc-cache -fv
 
 LABEL \
