@@ -1,0 +1,28 @@
+---
+configuration:
+  tz:
+    name: 時區（TZ）
+    description: 容器內系統時區（例如 Asia/Taipei 或 UTC）。
+  media_dir:
+    name: 媒體庫目錄（MEDIA_DIR）
+    description: 影片根目錄路徑（預設 /media，亦可改設為 /media/... 或 /share/amule/incoming 直接播放 aMule 下載完成的影片）。
+  admin_user:
+    name: 管理員帳號（ADMIN_USER）
+    description: 預設管理員登入帳號名稱（預設 admin）。
+  admin_password:
+    name: 管理員密碼（選填）
+    description: 管理員登入密碼（至少 4 碼）。首次啟動若留空，系統會自動產生隨機密碼並印在日誌；若填寫則會在啟動時同步更新該管理員密碼。
+  jwt_secret:
+    name: 登入憑證簽章金鑰（選填）
+    description: 用於簽發登入 Token 的密鑰；留空會自動產生並持久化保存於 /config/.jwt_secret，重啟不會掉登入。
+  segment_duration:
+    name: HLS 切片秒數
+    description: 每個 HLS 串流切片的秒數（預設 4 秒，範圍 2 至 10 秒）。
+  max_keep_segments:
+    name: 滑動視窗保留切片數
+    description: 播放頭後方保留的舊切片數量，超過即自動回收（預設 10 個，範圍 4 至 60 個）。
+  transcode_storage:
+    name: HLS 轉碼暫存位置
+    description: 預設 auto（若容器 /dev/shm >= 256MB 則用記憶體，若為 HA 預設 64MB 則自動改用 /tmp/pistream_hls 防止 4K 換殼塞滿記憶體），亦可強制指定 shm 或 tmp。
+network:
+  8080/tcp: Web UI 與 HTTP 206 零拷貝直連串流埠（Ingress 亦使用內部 8080）

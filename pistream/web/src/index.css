@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #090d16;
+  color: #f1f5f9;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans TC", sans-serif;
+}
+
+video::cue {
+  background-color: rgba(0, 0, 0, 0.72);
+  color: #ffffff;
+  font-size: var(--pistream-cue-size, 1.05em);
+  line-height: 1.4;
+}
