@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- Fixed subtitle-to-video timeline desynchronization in `remux` (`-c:v copy`) mode by using `-copyts -start_at_zero` to preserve true keyframe PTS timestamps instead of stamping preceding keyframes with a synthetic `output_ts_offset`.
+- Locked `hls.js` initial PTS reference (`_initPTS = 0.000s`) on stream startup before performing resume seeks, preventing initial keyframe offset from shifting the MSE timeline.
+- Fixed cumulative `hls.js` `alignSliding` segment-index drift on long MKV playback by resetting unbuffered fragment boundaries to the 4-second grid (`sn * 4`) and passing an explicit `seek` sequence token on out-of-buffer timeline seeks.
+- Added live subtitle time-offset controls (`-0.5s` / `0.0s` reset / `+0.5s`) in the video player top bar for real-time WebVTT cue synchronization without reloading.
+
 ## 0.1.0
 
 - Initial Home Assistant App release packaging [`s90061/pistream`](https://github.com/s90061/pistream) (`aarch64`).

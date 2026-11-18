@@ -29,6 +29,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
 
   const [subtitles, setSubtitles] = useState<SubtitleTrack[]>([]);
   const [selectedSub, setSelectedSub] = useState<string>('off');
+  const [subtitleOffset, setSubtitleOffset] = useState<number>(0);
+  const subtitleOffsetRef = useRef<number>(0);
+  const cueOrigTimesRef = useRef<WeakMap<TextTrackCue, { start: number; end: number }>>(new WeakMap());
+  const seekSeqRef = useRef<number>(0);
   const [subtitleScale, setSubtitleScale] = useState<number>(() => {
     const saved = Number(localStorage.getItem('pistream_subtitle_scale'));
     return saved >= 75 && saved <= 220 ? saved : 100;
@@ -37,6 +41,38 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
   const handleSubtitleScaleChange = (scale: number) => {
     setSubtitleScale(scale);
     localStorage.setItem('pistream_subtitle_scale', String(scale));
+  };
+
+  const applySubtitleOffsetToTrack = (offsetSec: number) => {
+    const video = videoRef.current;
+    if (!video || !video.textTracks || !video.textTracks[0]) return;
+    const track = video.textTracks[0];
+    const cues = track.cues;
+    if (!cues || cues.length === 0) return;
+
+    for (let i = 0; i < cues.length; i++) {
+      const cue = cues[i];
+      let orig = cueOrigTimesRef.current.get(cue);
+      if (!orig) {
+        orig = { start: cue.startTime, end: cue.endTime };
+        cueOrigTimesRef.current.set(cue, orig);
+      }
+      const nextStart = Math.max(0, Number((orig.start + offsetSec).toFixed(3)));
+      const nextEnd = Math.max(nextStart + 0.1, Number((orig.end + offsetSec).toFixed(3)));
+      if (Math.abs(cue.startTime - nextStart) > 0.001) {
+        cue.startTime = nextStart;
+      }
+      if (Math.abs(cue.endTime - nextEnd) > 0.001) {
+        cue.endTime = nextEnd;
+      }
+    }
+  };
+
+  const adjustSubtitleOffset = (deltaSec: number, reset = false) => {
+    const next = reset ? 0 : Math.max(-60, Math.min(60, Number((subtitleOffset + deltaSec).toFixed(1))));
+    subtitleOffsetRef.current = next;
+    setSubtitleOffset(next);
+    applySubtitleOffsetToTrack(next);
   };
 
   const [currentTime, setCurrentTime] = useState(0);
@@ -108,6 +144,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
 
     const streamUrl = resolveUrl(decision.stream_url);
 
+    let cleanupSeekingListener: (() => void) | null = null;
+
     if (decision.mode === 'direct') {
       video.src = streamUrl;
       const onLoaded = () => {
@@ -118,11 +156,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
       };
       video.addEventListener('loadedmetadata', onLoaded, { once: true });
     } else if (Hls.isSupported()) {
+      // 重要：初始化時固定由 startPosition: 0 先載入 seg_00000.ts，確保 hls.js MP4Remuxer 的 _initPTS 鎖定為 0.000s；
+      // 待首個切片載入完成後，再於 FRAG_BUFFERED 立即跳轉至 targetStartSec，徹底消除續播時因關鍵幀時間差造成的 initPTS 偏移。
+      let pendingInitialSeek: number | null = targetStartSec > 0 ? targetStartSec : null;
+
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: false,
-        startPosition: targetStartSec > 0 ? targetStartSec : -1,
-        backBufferLength: 20,
+        startPosition: 0,
+        backBufferLength: 60,
         maxBufferLength: 16,
         maxMaxBufferLength: 32,
         maxBufferHole: 2.5,
@@ -137,6 +179,64 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
       let fatalNetworkRetries = 0;
       let fatalMediaRetries = 0;
       let needRestartLoadOnSeek = false;
+
+      // 當使用者拖拉時間軸至未緩衝區間時，重設所有切片的預期時間為標準 4 秒網格 (sn * 4)，
+      // 消除 remux (-c:v copy) 模式下因關鍵幀長度 > 4 秒所造成的 alignSliding 累積切片編號偏移，
+      // 並附帶遞增的 seek 序號通知後端立即重啟 FFmpeg 定位至正確秒數。
+      const resetFragmentsForOutBufferSeek = () => {
+        seekSeqRef.current += 1;
+        const seq = seekSeqRef.current;
+        const levelDetailsList = [
+          hls.levels?.[0]?.details,
+          (hls as any).latestLevelDetails,
+        ];
+        for (const details of levelDetailsList) {
+          if (!details || !Array.isArray(details.fragments)) continue;
+          for (const f of details.fragments as any[]) {
+            if (typeof f.sn === 'number') {
+              f.start = f.sn * 4;
+              f.duration = 4;
+              delete f.startPTS;
+              delete f.endPTS;
+              delete f.startDTS;
+              delete f.endDTS;
+              if (typeof f.relurl === 'string') {
+                f.relurl = f.relurl.replace(/(&seek=\d+)?$/, `&seek=${seq}`);
+                f._url = null;
+              }
+            }
+          }
+        }
+        try {
+          (hls as any).streamController?.fragmentTracker?.removeAllFragments?.();
+        } catch {
+          // ignore internal hls.js tracker cleanup errors
+        }
+      };
+
+      const onVideoSeeking = () => {
+        const cur = video.currentTime;
+        const buffered = video.buffered;
+        let inBuffer = false;
+        for (let i = 0; i < buffered.length; i++) {
+          if (cur >= buffered.start(i) - 0.15 && cur <= buffered.end(i) + 0.15) {
+            inBuffer = true;
+            break;
+          }
+        }
+        if (!inBuffer) {
+          resetFragmentsForOutBufferSeek();
+        }
+        if (needRestartLoadOnSeek && hlsRef.current) {
+          needRestartLoadOnSeek = false;
+          hlsRef.current.startLoad(video.currentTime);
+        }
+      };
+      // 使用 capture: true 確保在 hls.js 內部的 onMediaSeeking 選取切片前先完成 4 秒網格校正
+      video.addEventListener('seeking', onVideoSeeking, { capture: true });
+      cleanupSeekingListener = () => {
+        video.removeEventListener('seeking', onVideoSeeking, { capture: true });
+      };
 
       hls.loadSource(streamUrl);
       hls.attachMedia(video);
@@ -153,6 +253,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
       });
 
       hls.on(Hls.Events.FRAG_BUFFERED, () => {
+        if (pendingInitialSeek !== null) {
+          const seekTarget = pendingInitialSeek;
+          pendingInitialSeek = null;
+          video.currentTime = seekTarget;
+          video.play().catch(() => {});
+          return;
+        }
         if (video.paused && !video.seeking) return;
         const buffered = video.buffered;
         const cur = video.currentTime;
@@ -165,25 +272,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
             inBuffer = true;
             break;
           }
-          if (s > cur && s - cur <= 12 && e > s + 0.1) {
+          if (s > cur && s - cur <= 1.5 && e > s + 0.1) {
             if (nearestStart === null || s < nearestStart) {
               nearestStart = s;
             }
           }
         }
         if (!inBuffer && nearestStart !== null) {
-          video.currentTime = nearestStart + 0.05;
+          video.currentTime = nearestStart + 0.02;
           video.play().catch(() => {});
         }
       });
-
-      const onVideoSeeking = () => {
-        if (needRestartLoadOnSeek && hlsRef.current) {
-          needRestartLoadOnSeek = false;
-          hlsRef.current.startLoad(video.currentTime);
-        }
-      };
-      video.addEventListener('seeking', onVideoSeeking);
 
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) {
@@ -250,6 +349,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     }
 
     return () => {
+      if (cleanupSeekingListener) {
+        cleanupSeekingListener();
+      }
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
@@ -287,6 +389,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
       const t = video.querySelector('track');
       if (t) video.removeChild(t);
     }
+    cueOrigTimesRef.current = new WeakMap();
 
     if (subId !== 'off') {
       const track = document.createElement('track');
@@ -295,13 +398,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
       track.srclang = 'zh';
       track.label = '字幕';
       track.default = true;
+      track.addEventListener('load', () => {
+        if (video.textTracks && video.textTracks[0]) {
+          video.textTracks[0].mode = 'showing';
+        }
+        applySubtitleOffsetToTrack(subtitleOffsetRef.current);
+      });
       video.appendChild(track);
 
       setTimeout(() => {
         if (video.textTracks && video.textTracks[0]) {
           video.textTracks[0].mode = 'showing';
         }
-      }, 50);
+        applySubtitleOffsetToTrack(subtitleOffsetRef.current);
+      }, 80);
     }
   };
 
@@ -492,6 +602,34 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
                 <option value={180}>字體：特大 (180%)</option>
                 <option value={220}>字體：超大 (220%)</option>
               </select>
+
+              {selectedSub !== 'off' && (
+                <div className="flex items-center rounded-lg bg-surface/90 border border-border overflow-hidden text-xs">
+                  <button
+                    onClick={() => adjustSubtitleOffset(-0.5)}
+                    className="px-2 py-1.5 hover:bg-slate-700 text-slate-200 font-mono border-r border-border"
+                    title="字幕提前 0.5 秒（字幕太慢時點擊）"
+                  >
+                    -0.5s
+                  </button>
+                  <button
+                    onClick={() => adjustSubtitleOffset(0, true)}
+                    className={`px-2 py-1.5 font-mono ${
+                      subtitleOffset !== 0 ? 'text-sky-300 font-bold' : 'text-slate-400'
+                    } hover:bg-slate-700`}
+                    title="點擊重置字幕時間偏移為 0.0 秒"
+                  >
+                    字幕 {subtitleOffset > 0 ? `+${subtitleOffset.toFixed(1)}s` : `${subtitleOffset.toFixed(1)}s`}
+                  </button>
+                  <button
+                    onClick={() => adjustSubtitleOffset(0.5)}
+                    className="px-2 py-1.5 hover:bg-slate-700 text-slate-200 font-mono border-l border-border"
+                    title="字幕延後 0.5 秒（字幕太快時點擊）"
+                  >
+                    +0.5s
+                  </button>
+                </div>
+              )}
             </>
           )}
 

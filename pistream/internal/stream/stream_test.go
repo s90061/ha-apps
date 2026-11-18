@@ -53,7 +53,8 @@ func TestDecideStreamMode(t *testing.T) {
 }
 
 func TestBuildFFmpegArgsSeekAndOffset(t *testing.T) {
-	args := BuildFFmpegArgs(TranscodeParams{
+	// 1. Remux 模式：必須包含 -noaccurate_seek、-copyts、-start_at_zero，保留關鍵幀真實 PTS，避免字幕錯位
+	remuxArgs := BuildFFmpegArgs(TranscodeParams{
 		InputFile:      "/media/movie.mkv",
 		OutputDir:      "/dev/shm/out",
 		StartTimeSec:   600.0,
@@ -64,18 +65,38 @@ func TestBuildFFmpegArgsSeekAndOffset(t *testing.T) {
 		AudioTrack:     1,
 	})
 
-	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "-ss 600.000 -i /media/movie.mkv") {
-		t.Fatalf("預期 -ss 置於 -i 之前，實際參數: %s", joined)
+	joinedRemux := strings.Join(remuxArgs, " ")
+	if !strings.Contains(joinedRemux, "-noaccurate_seek -ss 600.000 -i /media/movie.mkv") {
+		t.Fatalf("預期 remux 包含 -noaccurate_seek -ss 置於 -i 之前，實際參數: %s", joinedRemux)
 	}
-	if !strings.Contains(joined, "-c:v copy") {
-		t.Fatalf("預期 remux 包含 -c:v copy，實際參數: %s", joined)
+	if !strings.Contains(joinedRemux, "-c:v copy") {
+		t.Fatalf("預期 remux 包含 -c:v copy，實際參數: %s", joinedRemux)
 	}
-	if !strings.Contains(joined, "output_ts_offset=600.000") {
-		t.Fatalf("預期包含 output_ts_offset=600.000 對齊時間戳，實際參數: %s", joined)
+	if !strings.Contains(joinedRemux, "-copyts -start_at_zero") {
+		t.Fatalf("預期 remux 包含 -copyts -start_at_zero 保留關鍵幀真實 PTS，實際參數: %s", joinedRemux)
 	}
-	if !strings.Contains(joined, "-map 0:a:1?") {
-		t.Fatalf("預期映射第二音軌 0:a:1?，實際參數: %s", joined)
+	if !strings.Contains(joinedRemux, "-map 0:a:1?") {
+		t.Fatalf("預期映射第二音軌 0:a:1?，實際參數: %s", joinedRemux)
+	}
+
+	// 2. Transcode 模式：精確跳轉並透過 output_ts_offset 對齊時間戳
+	transArgs := BuildFFmpegArgs(TranscodeParams{
+		InputFile:      "/media/movie.mkv",
+		OutputDir:      "/dev/shm/out",
+		StartTimeSec:   600.0,
+		StartSegNumber: 150,
+		SegmentDur:     4,
+		Mode:           "transcode",
+		Quality:        "1080p",
+		AudioTrack:     1,
+	})
+
+	joinedTrans := strings.Join(transArgs, " ")
+	if !strings.Contains(joinedTrans, "-ss 600.000 -i /media/movie.mkv") {
+		t.Fatalf("預期 transcode -ss 置於 -i 之前，實際參數: %s", joinedTrans)
+	}
+	if !strings.Contains(joinedTrans, "output_ts_offset=600.000") {
+		t.Fatalf("預期 transcode 包含 output_ts_offset=600.000 對齊時間戳，實際參數: %s", joinedTrans)
 	}
 }
 

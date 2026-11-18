@@ -415,8 +415,9 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 			quality = "original"
 		}
 		audioTrack, _ := strconv.Atoi(r.URL.Query().Get("audio"))
+		seekSeq := r.URL.Query().Get("seek")
 
-		segPath, err := hlsMgr.EnsureSegmentReady(r.Context(), sessionID, media, mode, quality, audioTrack, segIdx)
+		segPath, err := hlsMgr.EnsureSegmentReady(r.Context(), sessionID, media, mode, quality, audioTrack, segIdx, seekSeq)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusGatewayTimeout)
 			return
