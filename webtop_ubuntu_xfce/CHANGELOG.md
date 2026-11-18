@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4
+
+- Automatically map `/config/Downloads`, `/config/下載`, and `XDG_DOWNLOAD_DIR` to Home Assistant `/share/downloads` by default at boot (`init-ha-downloads`), safely migrating any existing non-conflicting downloaded files out of `/config` without overwriting.
+- Add configurable `download_dir` option to the Home Assistant configuration UI (defaulting to `/share/downloads`) with English and Traditional Chinese translations.
+
 ## 0.1.3
 
 - Preinstall complete Traditional Chinese fonts (`fonts-noto-cjk`, `fonts-noto-cjk-extra`, `fonts-wqy-zenhei`) and Ubuntu Traditional Chinese language packs (`language-pack-zh-hant`, `language-pack-gnome-zh-hant`) with a `Noto Sans CJK TC` fontconfig preference (`/etc/fonts/conf.d/64-language-selector-prefer.conf`).

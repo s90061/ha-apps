@@ -1,6 +1,6 @@
 ---
 name: "Webtop (Ubuntu XFCE)"
-version: "0.1.3"
+version: "0.1.4"
 slug: "webtop_ubuntu_xfce"
 description: "Ubuntu XFCE desktop in your browser via Selkies (linuxserver/webtop sha256:12b00c)."
 url: "https://github.com/s90061/ha-apps/tree/main/webtop_ubuntu_xfce"
@@ -24,12 +24,14 @@ options:
   tz: "Asia/Taipei"
   title: "Ubuntu XFCE"
   lc_all: "zh_TW.UTF-8"
+  download_dir: "/share/downloads"
   puid: 1000
   pgid: 1000
 schema:
   tz: "str"
   title: "str"
   lc_all: "str"
+  download_dir: "str"
   puid: "int(0,65535)"
   pgid: "int(0,65535)"
   custom_user: "str?"
