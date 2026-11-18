@@ -1,0 +1,19 @@
+---
+configuration:
+  tz:
+    name: "時區 (Timezone)"
+    description: "容器時區設定（例如：Asia/Taipei）。"
+  storage_dir:
+    name: "HA 伺服器 PDF 儲存目錄"
+    description: "在 Home Assistant 主機上儲存 PdfCraft 文件的資料夾路徑（預設為 /share/pdfcraft，亦可設為 /config/pdfcraft 或 /media/pdfcraft）。"
+  default_language:
+    name: "預設介面語言"
+    description: "初次開啟 PdfCraft 時自動套用的介面語言（預設 zh-hant 為繁體中文，亦可於 PdfCraft 內隨時切換）。"
+  author_name:
+    name: "預設作者名稱 (Author)"
+    description: "用於 PDF 註解與標註 (Comments / Annotations) 的預設作者署名。"
+  also_download_on_save:
+    name: "存檔時同步下載至本機電腦"
+    description: "啟用後，於 PdfCraft 按下儲存或匯出時，除了自動寫入 HA 伺服器目錄外，也會同步觸發瀏覽器下載至本機電腦（亦可於上方工具列即時切換）。"
+network:
+  8089/tcp: "PdfCraft 網頁介面直連連接埠"

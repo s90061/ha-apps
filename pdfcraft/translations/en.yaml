@@ -1,0 +1,19 @@
+---
+configuration:
+  tz:
+    name: "Timezone"
+    description: "Container timezone (for example: Asia/Taipei, UTC)."
+  storage_dir:
+    name: "Server PDF Directory"
+    description: "Directory on Home Assistant where PdfCraft documents are saved (default: /share/pdfcraft). Must be under /share, /config, or /media."
+  default_language:
+    name: "Default Interface Language"
+    description: "Initial PdfCraft interface language applied on first visit (default: zh-hant for Traditional Chinese)."
+  author_name:
+    name: "Default Author Name"
+    description: "Author name used for PDF comments and annotations in PdfCraft."
+  also_download_on_save:
+    name: "Also Download to Local Computer on Save"
+    description: "When enabled, saving or exporting in PdfCraft both writes the file to the Home Assistant server directory and triggers a browser download to your local device."
+network:
+  8089/tcp: "Direct PdfCraft Web UI HTTP port"
