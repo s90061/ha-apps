@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Lightweight static WebAssembly + Home Assistant file bridge server for WordCraft."""
 
 import json
