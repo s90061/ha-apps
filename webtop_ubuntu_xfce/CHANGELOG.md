@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.5
+
+- Preinstall native Firefox (`.deb` from `ppa:xtradeb/apps`) with Traditional Chinese localization (`firefox-locale-zh-hant`) alongside Chromium so Firefox launches natively with direct `/share/downloads` access.
+- Add `/usr/lib/firefox/browser/defaults/preferences/zz-ha-defaults.js` to follow the system `LC_ALL` locale, default downloads to `XDG_DOWNLOAD_DIR`, disable telemetry/first-run clutter, and suppress container user-namespace sandbox warning banners.
+
 ## 0.1.4
 
 - Automatically map `/config/Downloads`, `/config/下載`, and `XDG_DOWNLOAD_DIR` to Home Assistant `/share/downloads` by default at boot (`init-ha-downloads`), safely migrating any existing non-conflicting downloaded files out of `/config` without overwriting.

@@ -11,9 +11,11 @@ ENV APP_VERSION="${BUILD_VERSION}" \
     LANGUAGE="zh_TW" \
     DOWNLOAD_DIR="/share/downloads"
 
-# Install complete Traditional Chinese fonts and language packs, then preserve original bwrap binary
+# Install complete Traditional Chinese fonts, language packs, and native Firefox, then preserve original bwrap binary
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+        firefox \
+        firefox-locale-zh-hant \
         fonts-noto-cjk \
         fonts-noto-cjk-extra \
         fonts-wqy-zenhei \

@@ -34,5 +34,6 @@ This app packages `linuxserver/webtop:ubuntu-xfce` (`sha256:12b00cce8f60ee8f4553
 * `DISABLE_DRI3` defaults to `true` and `SELKIES_USE_CSS_SCALING` defaults to `true` (disabling HiDPI for smooth Raspberry Pi / Ingress streaming).
 * A `/usr/bin/bwrap` compatibility wrapper falls back cleanly when Home Assistant's default AppArmor profile blocks bubblewrap sandboxing for `libglycin`, preventing XFCE session aborts.
 * Traditional Chinese fonts (`fonts-noto-cjk`, `fonts-noto-cjk-extra`, `fonts-wqy-zenhei`), `language-pack-zh-hant`, `language-pack-gnome-zh-hant`, and a `Noto Sans CJK TC` fontconfig preference are baked into the image with `LC_ALL=zh_TW.UTF-8` as the default.
+* Native Firefox (`.deb` with `firefox-locale-zh-hant`) is preinstalled alongside Chromium and configured to follow the container `LC_ALL` locale, save downloads via `XDG_DOWNLOAD_DIR` (`/share/downloads`), and suppress container user-namespace sandbox warnings.
 * IPv6 support is auto-detected at boot; if unavailable inside the container network, `DISABLE_IPV6=true` is set automatically so Nginx starts cleanly.
 * `wrapped-chromium` appends `--disable-dev-shm-usage` to prevent tab crashes under tight `/dev/shm` constraints.
