@@ -1,0 +1,50 @@
+---
+configuration:
+  tz:
+    name: Timezone
+    description: Container timezone (for example, Asia/Taipei or UTC).
+  incoming_dir:
+    name: Incoming Directory
+    description: Directory inside the container for completed downloads (default /share/amule/incoming).
+  temp_dir:
+    name: Temporary Directory
+    description: Directory inside the container for incomplete downloads (default /share/amule/temp; keep on the same filesystem as incoming_dir for instant moves).
+  puid:
+    name: User ID (PUID)
+    description: Numeric user ID mapped to the amule service user for /config and download permissions.
+  pgid:
+    name: Group ID (PGID)
+    description: Numeric group ID mapped to the amule service group for /config and download permissions.
+  umask:
+    name: File Creation Umask
+    description: Octal umask applied to created files and directories (default 0002).
+  fix_permissions:
+    name: Fix Download Permissions on Boot
+    description: Automatically chown incoming_dir and temp_dir to PUID:PGID on startup (disable on NFS/SMB mounts that reject chown).
+  webui_pwd:
+    name: Web UI Admin Password (Optional)
+    description: Admin password for the aMule Web UI and REST API. If left blank on first start, a random password is generated and printed in the app log.
+  webui_guest_pwd:
+    name: Web UI Guest Password (Optional)
+    description: Optional read-only guest password for the Web UI. Leave blank to disable guest login.
+  gui_pwd:
+    name: External Connections Password (Optional)
+    description: Password for external EC clients (amulegui / amulecmd on port 4712). Leave blank to keep or auto-generate in the app log on first start.
+  mod_auto_restart_enabled:
+    name: Enable Auto Restart
+    description: Automatically restart the amuled service on a cron schedule.
+  mod_auto_restart_cron:
+    name: Auto Restart Cron Schedule
+    description: Cron expression used when auto restart is enabled (default "0 6 * * *").
+  mod_auto_share_enabled:
+    name: Enable Auto Share Directories
+    description: Rewrite recursive shared directories on every startup from mod_auto_share_directories (overrides Web UI share edits).
+  mod_auto_share_directories:
+    name: Auto Share Directories
+    description: Semicolon-separated list of directories to share recursively when mod_auto_share_enabled is true.
+network:
+  4662/tcp: ED2K client-to-client TCP port (forward on router for High ID)
+  4665/udp: ED2K server UDP port (TCP port + 3, global searches)
+  4672/udp: Extended eMule protocol and Kademlia UDP port
+  4711/tcp: Direct Web UI & REST API HTTP port (disabled by default; Ingress is used)
+  4712/tcp: External Connections port for amulegui / amulecmd (disabled by default)

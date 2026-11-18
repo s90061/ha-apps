@@ -1,0 +1,62 @@
+---
+name: "aMule"
+version: "0.1.0"
+slug: "amule"
+description: "eMule / ED2K and Kademlia P2P client with Web UI (ngosang/amule 3.2.0-1)."
+url: "https://github.com/s90061/ha-apps/tree/main/amule"
+arch:
+  - aarch64
+init: false
+ingress: true
+panel_icon: "mdi:donkey"
+panel_title: "aMule"
+timeout: 30
+ports:
+  4662/tcp: 4662
+  4665/udp: 4665
+  4672/udp: 4672
+  4711/tcp: null
+  4712/tcp: null
+ports_description:
+  4662/tcp: "ED2K client-to-client TCP port (forward on router for High ID)"
+  4665/udp: "ED2K server UDP port (TCP port + 3, global searches)"
+  4672/udp: "Extended eMule protocol and Kademlia UDP port"
+  4711/tcp: "Direct Web UI & REST API HTTP port (optional; Ingress is enabled by default)"
+  4712/tcp: "External Connections port for amulegui / amulecmd (optional)"
+map:
+  - app_config:rw
+  - share:rw
+  - media:rw
+backup_exclude:
+  - "*.log"
+  - "logfile*"
+  - "muleLock"
+  - "geoip.mmdb"
+options:
+  tz: "Asia/Taipei"
+  incoming_dir: "/share/amule/incoming"
+  temp_dir: "/share/amule/temp"
+  puid: 1000
+  pgid: 1000
+  umask: "0002"
+  fix_permissions: true
+  mod_auto_restart_enabled: false
+  mod_auto_restart_cron: "0 6 * * *"
+  mod_auto_share_enabled: false
+  mod_auto_share_directories: "/share/amule/incoming"
+schema:
+  tz: "str"
+  incoming_dir: "match(^/(share|media|config)/.+$)"
+  temp_dir: "match(^/(share|media|config)/.+$)"
+  puid: "int(1,65535)"
+  pgid: "int(1,65535)"
+  umask: "match(^[0-7]{3,4}$)"
+  fix_permissions: "bool"
+  webui_pwd: "password?"
+  webui_guest_pwd: "password?"
+  gui_pwd: "password?"
+  mod_auto_restart_enabled: "bool"
+  mod_auto_restart_cron: "str"
+  mod_auto_share_enabled: "bool"
+  mod_auto_share_directories: "str"
+image: "ghcr.io/s90061/ha-apps-amule"

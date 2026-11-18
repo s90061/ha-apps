@@ -1,0 +1,3 @@
+#!/bin/sh
+# Per-service s6-log: atomic writes to stdout matching upstream services.
+exec s6-log 1

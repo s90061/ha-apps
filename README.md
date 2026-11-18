@@ -32,6 +32,12 @@
 
 封裝 `linuxserver/webtop:ubuntu-xfce`（嚴格釘選 `aarch64` digest `sha256:12b00cce8f60ee8f4553f2726d35c5d48d34d6c87513b1044a20619a0a2e3c3b`），支援 Home Assistant Ingress 側邊欄與 HTTPS `3001` 直連桌面，並自動整合 `/config`（`app_config:rw`）、`/share`、UI 設定欄位與 Chromium `--disable-dev-shm-usage`。
 
+#### [aMule](./amule)
+
+![Supports aarch64 Architecture][aarch64-shield]
+
+封裝 `ngosang/amule`（`3.2.0-1`，嚴格釘選 multi-arch OCI digest `sha256:4b1a4246d57e7994b31c723b8c55474654e328c1b8eb0f9deb7f1843673bd515`，支援 `aarch64`），透過內建 Nginx Proxy 完整支援 Home Assistant Ingress 側邊欄登入與 SSE 即時更新，整合 `/config`（`app_config:rw`）、`/share` 與 `/media`，並預設開啟 ED2K / Kademlia P2P 連接埠（`4662`、`4665`、`4672`）。
+
 ### 開發與維護規範（防呆說明）
 
 * **`main` 分支僅作穩定發布**：請在開發分支修改與測試後再開 PR 合併至 `main`。合併時若要觸發 Home Assistant 更新與 GHCR 重新建置，請務必同步更新 `<app>/config.yaml` 的 `version` 字串（例如 `"0.1.1"`）與 `CHANGELOG.md`。
@@ -60,6 +66,7 @@ A public multi-app repository compliant with Home Assistant Supervisor standards
 
 * **[Hello World](./hello_world)** — Minimal starter app using Home Assistant Alpine Base + `s6-overlay v3` + `bashio`, with localized English & Traditional Chinese configuration UI.
 * **[Webtop (Ubuntu XFCE)](./webtop_ubuntu_xfce)** — Ubuntu XFCE browser desktop (`linuxserver/webtop:ubuntu-xfce`, pinned `aarch64` digest) with HA Ingress, optional HTTPS port `3001`, persistent `app_config` (`/config`), and localized options.
+* **[aMule](./amule)** — eMule / ED2K and Kademlia P2P client (`ngosang/amule:3.2.0-1`, `aarch64`) with HA Ingress cookie-rewriting proxy for `amuleapi` Web UI, persistent `/config`, `/share` and `/media` storage, and P2P port mappings.
 
 ### Adding a New App
 

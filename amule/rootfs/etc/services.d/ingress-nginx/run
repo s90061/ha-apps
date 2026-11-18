@@ -1,0 +1,21 @@
+#!/bin/sh
+if [ "${WEBUI_ENABLED:-true}" != "true" ]; then
+    printf "[SUPERVISOR] Web UI disabled. Not starting HA Ingress nginx proxy.\n"
+    exec sleep infinity
+fi
+
+mkdir -p \
+    /tmp/nginx-client-body \
+    /tmp/nginx-proxy \
+    /tmp/nginx-fastcgi \
+    /tmp/nginx-uwsgi \
+    /tmp/nginx-scgi
+chown -R www-data:www-data \
+    /tmp/nginx-client-body \
+    /tmp/nginx-proxy \
+    /tmp/nginx-fastcgi \
+    /tmp/nginx-uwsgi \
+    /tmp/nginx-scgi
+
+printf "[SUPERVISOR] Starting HA Ingress nginx proxy on port 8099 ...\n"
+exec nginx -c /etc/nginx/ha-ingress.conf -g "daemon off;"
