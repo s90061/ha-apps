@@ -51,6 +51,13 @@
 
 封裝純 Rust 開源文書處理器 [`storytold/wordcraft`](https://github.com/storytold/wordcraft)（`v0.18.1` WebAssembly + WebGPU/WebGL2），提供完整 Ribbon 介面、`.docx` / `.odt` / `.rtf` / `.pdf` / `.md` 讀寫、追蹤修訂與目錄索引；所有渲染皆於瀏覽器端完成（樹莓派 0% CPU 負載），並整合 **HA 伺服器雲端文件庫（`/share/wordcraft`）** 與本機電腦上下載雙模式。
 
+#### [PdfCraft](./pdfcraft)
+
+![Supports aarch64 Architecture][aarch64-shield]
+![Supports amd64 Architecture][amd64-shield]
+
+封裝純 Rust 開源 PDF 閱讀與編輯器 [`storytold/pdfcraft`](https://github.com/storytold/pdfcraft)（`v0.21.1` WebAssembly + WebGL + 瀏覽器端 ONNX OCR），支援頁面重組、文字與圖片編輯、表單填寫、簽章、遮蔽（Redaction）、內建 OCR 文字辨識與 PDF/A 驗證；所有運算皆於瀏覽器端完成（樹莓派 0% CPU 負載），並整合 **HA 伺服器雲端 PDF 庫（`/share/pdfcraft`）** 與本機電腦上下載雙模式。
+
 ### 開發與維護規範（防呆說明）
 
 * **`main` 分支僅作穩定發布**：請在開發分支修改與測試後再開 PR 合併至 `main`。合併時若要觸發 Home Assistant 更新與 GHCR 重新建置，請務必同步更新 `<app>/config.yaml` 的 `version` 字串（例如 `"0.1.1"`）與 `CHANGELOG.md`。
@@ -82,6 +89,7 @@ A public multi-app repository compliant with Home Assistant Supervisor standards
 * **[aMule](./amule)** — eMule / ED2K and Kademlia P2P client (`ngosang/amule:3.2.0-1`, `aarch64`) with HA Ingress cookie-rewriting proxy for `amuleapi` Web UI, persistent `/config`, `/share` and `/media` storage, and P2P port mappings.
 * **[PiStream](./pistream)** — Lightweight Raspberry Pi 5 media server (`aarch64`) with HTTP 206 Direct Play, zero-copy Remux, sliding-window HLS transcoding, HA Ingress + direct port `8080`, and read-only `/media` & `/share` integration.
 * **[WordCraft](./wordcraft)** — Pure-Rust word processor (`storytold/wordcraft` `v0.18.1`, `aarch64` & `amd64`) running via WebAssembly (`WebGPU` / `WebGL2`) with integrated Home Assistant server document library (`/share/wordcraft`) and local computer upload/download.
+* **[PdfCraft](./pdfcraft)** — Pure-Rust PDF reader, editor, and ONNX OCR tool (`storytold/pdfcraft` `v0.21.1`, `aarch64` & `amd64`) running via WebAssembly (`WebGL`) with integrated Home Assistant server PDF library (`/share/pdfcraft`) and local computer upload/download.
 
 ### Adding a New App
 

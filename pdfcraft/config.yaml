@@ -1,0 +1,35 @@
+---
+name: "PdfCraft"
+version: "0.1.0"
+slug: "pdfcraft"
+description: "Open-source pure-Rust PDF reader, editor, OCR, and form/signature tool via WebAssembly with Home Assistant server storage."
+url: "https://github.com/s90061/ha-apps/tree/main/pdfcraft"
+arch:
+  - aarch64
+  - amd64
+init: false
+ingress: true
+ingress_port: 8089
+panel_icon: "mdi:file-pdf-box"
+panel_title: "PdfCraft"
+ports:
+  8089/tcp: 8089
+ports_description:
+  8089/tcp: "Direct Web UI port (Home Assistant Ingress also uses internal 8089)"
+map:
+  - app_config:rw
+  - share:rw
+  - media:rw
+options:
+  tz: "Asia/Taipei"
+  storage_dir: "/share/pdfcraft"
+  default_language: "zh-hant"
+  author_name: "Home Assistant"
+  also_download_on_save: false
+schema:
+  tz: "str"
+  storage_dir: "match(^/(share|config|media)(/.*)?$)"
+  default_language: "list(auto|zh-hant|zh-hans|en|ja|de|fr|es)"
+  author_name: "str"
+  also_download_on_save: "bool"
+image: "ghcr.io/s90061/ha-apps-pdfcraft"
