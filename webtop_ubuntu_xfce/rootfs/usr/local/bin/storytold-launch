@@ -1,9 +1,18 @@
 #!/bin/bash
 # shellcheck shell=bash
 # ==============================================================================
-# Launch WordCraft with Mesa software OpenGL fallback in headless/no-DRI3
-# Home Assistant containers (and avoid Pi 5 wgpu shader variable limit #3565).
+# Launch Storytold desktop apps (WordCraft, GridCraft, PdfCraft) with Mesa
+# software OpenGL fallback in headless/no-DRI3 Home Assistant containers
+# (and avoid Pi 5 wgpu shader variable limit #3565).
 # ==============================================================================
+
+app_name="$(basename -- "$0")"
+target="/usr/bin/${app_name}.real"
+
+if [[ ! -x "${target}" ]]; then
+  printf 'storytold-launch: target binary not found or not executable: %s\n' "${target}" >&2
+  exit 127
+fi
 
 if [[ -z "${WGPU_BACKEND:-}" ]]; then
   dri3="${DISABLE_DRI3:-}"
@@ -13,4 +22,4 @@ if [[ -z "${WGPU_BACKEND:-}" ]]; then
   fi
 fi
 
-exec /usr/bin/wordcraft.real "$@"
+exec "${target}" "$@"

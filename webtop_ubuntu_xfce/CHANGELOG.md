@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.7
+
+- Preinstall [GridCraft](https://github.com/storytold/gridcraft) (`v0.19.1`, `linux-aarch64.deb`, including `gridcraft` and `gridcraft-cli`) for native `.xlsx`/`.ods`/`.csv` spreadsheets and [PdfCraft](https://github.com/storytold/pdfcraft) (`v0.21.1`, `linux-aarch64.deb`, including `pdfcraft`, `pdfcraft-cli`, and bundled OCR models) for native PDF viewing, editing, signing, and OCR with direct `/share` access.
+- Consolidate the software OpenGL fallback launcher into `/usr/local/bin/storytold-launch` and symlink `wordcraft`, `gridcraft`, and `pdfcraft` to it so all three apps run cleanly under Mesa `llvmpipe` when `DISABLE_DRI3=true` or `/dev/dri/renderD128` is unreadable.
+
 ## 0.1.6
 
 - Preinstall [WordCraft](https://github.com/storytold/wordcraft) (`v0.18.1`, SHA-256 verified `linux-aarch64.deb`, including `wordcraft` and `wordcraft-cli`) along with X11/Wayland/Mesa software GL, `xdg-desktop-portal`, and `zenity` dependencies for native `.docx`/`.odt`/PDF editing with direct `/share` access.
