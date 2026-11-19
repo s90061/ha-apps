@@ -510,7 +510,7 @@ func (s *Store) GetContinueWatchingForUser(userID int64) ([]MediaFileWithProgres
 		JOIN media_files f ON p.media_file_id = f.id
 		WHERE p.user_id = ? AND p.is_watched = 0 AND p.position_seconds > 5
 		ORDER BY p.updated_at DESC
-		LIMIT 20;`
+		LIMIT 4;`
 
 	rows, err := s.Conn.Query(query, userID)
 	if err != nil {
