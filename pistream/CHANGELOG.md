@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- Limited the "Continue Watching" (`繼續觀看`) list to the 4 most recently watched unfinished videos so it stays on a single clean row on desktop.
+
 ## 0.1.2
 
 - Redesigned the PiStream web interface into a matte graphite home-cinema console with a single warm amber accent (`#e2a336`), uniform Lucide line icons, `Inter` + `Noto Sans TC` + `JetBrains Mono` typography (`tabular-nums`), and clean 16:9 thumbnails with specs relocated to the card footer.
