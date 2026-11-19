@@ -1,4 +1,4 @@
-import { FolderBrowseResult, MediaFile, StreamInfo, User } from '../types';
+import { FolderBrowseResult, MediaFile, SortOption, StreamInfo, User } from '../types';
 
 export function resolveUrl(path: string): string {
   const clean = path.replace(/^\/+/, '');
@@ -93,11 +93,15 @@ export const api = {
     }),
 
   // 媒體庫與資料夾導覽
-  browseFolder: (path: string) =>
-    request<FolderBrowseResult>(`/api/library/folders?path=${encodeURIComponent(path)}`),
+  browseFolder: (path: string, sort: SortOption = 'date_desc') =>
+    request<FolderBrowseResult>(
+      `/api/library/folders?path=${encodeURIComponent(path)}&sort=${encodeURIComponent(sort)}`,
+    ),
 
-  listAllFiles: (query = '') =>
-    request<MediaFile[]>(`/api/library/files?q=${encodeURIComponent(query)}`),
+  listAllFiles: (query = '', sort: SortOption = 'date_desc') =>
+    request<MediaFile[]>(
+      `/api/library/files?q=${encodeURIComponent(query)}&sort=${encodeURIComponent(sort)}`,
+    ),
 
   getContinueWatching: () => request<MediaFile[]>('/api/library/continue'),
 

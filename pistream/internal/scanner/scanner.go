@@ -210,6 +210,11 @@ func ProbeFile(absMediaRoot, filePath string) (*db.MediaFile, error) {
 		relDir = ""
 	}
 
+	var fileModTime int64
+	if fi, statErr := os.Stat(filePath); statErr == nil {
+		fileModTime = fi.ModTime().Unix()
+	}
+
 	return &db.MediaFile{
 		Title:           baseName,
 		FilePath:        filePath,
@@ -225,6 +230,7 @@ func ProbeFile(absMediaRoot, filePath string) (*db.MediaFile, error) {
 		BitRate:         bitrate,
 		AudioTracksJSON: string(audioBytes),
 		SubtitlesJSON:   string(subsBytes),
+		FileModTime:     fileModTime,
 	}, nil
 }
 

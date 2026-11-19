@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
+import { ArrowLeft, Maximize2, Minimize2, Pause, Play, RotateCcw, RotateCw } from './Icons';
+import { CinemaSelect } from './CinemaSelect';
 import { AudioTrack, StreamInfo, SubtitleTrack } from '../types';
 import { api, detectHEVCSupport, resolveUrl } from '../services/api';
 import { formatDuration } from './VideoCard';
@@ -79,6 +81,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const hideTimerRef = useRef<number | null>(null);
+  const hoveringTopBarRef = useRef<boolean>(false);
+  const topBarRef = useRef<HTMLDivElement>(null);
 
   // 1. 取得串流決策（初次進入或切換畫質/音軌時觸發）
   useEffect(() => {
@@ -439,6 +445,56 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     setCurrentTime(nextPos);
   };
 
+  const isDropdownOpen = () => Boolean(topBarRef.current?.querySelector('[aria-expanded="true"]'));
+
+  const clearHideTimer = () => {
+    if (hideTimerRef.current !== null) {
+      window.clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+  };
+
+  const scheduleAutoHide = () => {
+    clearHideTimer();
+    if (!isPlaying || loading || error || hoveringTopBarRef.current || isDropdownOpen()) {
+      return;
+    }
+    hideTimerRef.current = window.setTimeout(() => {
+      if (!hoveringTopBarRef.current && !isDropdownOpen()) {
+        setControlsVisible(false);
+      }
+    }, 2500);
+  };
+
+  const revealControls = () => {
+    setControlsVisible(true);
+    scheduleAutoHide();
+  };
+
+  // 監聽系統全螢幕狀態變更（包含按 Esc 退出全螢幕）
+  useEffect(() => {
+    const handleFsChange = () => {
+      const fs = Boolean(document.fullscreenElement);
+      setIsFullscreen(fs);
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFsChange);
+      clearHideTimer();
+    };
+  }, []);
+
+  // 播放中（含全視窗播放器、Home Assistant Ingress 與系統全螢幕）無操作 2.5 秒自動隱藏頂部資訊與控制列；暫停或載入時保持顯示
+  useEffect(() => {
+    if (isPlaying && !loading && !error) {
+      scheduleAutoHide();
+    } else {
+      clearHideTimer();
+      setControlsVisible(true);
+    }
+    return () => clearHideTimer();
+  }, [isFullscreen, isPlaying, loading, error]);
+
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
     if (!document.fullscreenElement) {
@@ -462,19 +518,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
 
       if (e.code === 'Space') {
         e.preventDefault();
+        revealControls();
         if (video.paused) video.play();
         else video.pause();
       } else if (e.code === 'ArrowRight') {
         e.preventDefault();
+        revealControls();
         seekRelative(10);
       } else if (e.code === 'ArrowLeft') {
         e.preventDefault();
+        revealControls();
         seekRelative(-10);
       } else if (e.code === 'KeyF') {
         e.preventDefault();
         toggleFullscreen();
       } else if (e.code === 'KeyM') {
         e.preventDefault();
+        revealControls();
         video.muted = !video.muted;
       } else if (e.code === 'Escape') {
         if (!document.fullscreenElement) {
@@ -485,44 +545,90 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [duration, onClose]);
+  }, [duration, onClose, isFullscreen, isPlaying, loading, error]);
 
   const modeLabelMap: Record<string, string> = {
-    direct: 'HTTP 206 原生直連 (0% CPU)',
-    remux: '免重編碼換殼 (-c:v copy)',
-    transcode: '即時切片轉碼 (HLS)',
+    direct: 'Direct Play',
+    remux: 'Remux',
+    transcode: 'HLS 轉碼',
   };
+
+  const formatSubtitleOptionLabel = (sub: SubtitleTrack): string => {
+    const rawTitle = (sub.title || '').trim();
+    if (sub.is_external) {
+      // 後端掃描器已可能帶有「外掛 (xxx.srt)」，避免重複前綴並簡化與片名重疊的長檔名
+      const cleaned = rawTitle.replace(/^外掛\s*\((.+)\)$/, '$1');
+      const mediaTitle = streamInfo?.media.title || '';
+      const shortName =
+        mediaTitle && cleaned.toLowerCase().startsWith(mediaTitle.toLowerCase())
+          ? cleaned.slice(mediaTitle.length).replace(/^[._\-\s]+/, '') || cleaned
+          : cleaned || `字幕 ${sub.index + 1}`;
+      return `外掛：${shortName}`;
+    }
+    const base = rawTitle || `字幕 ${sub.index + 1}`;
+    const lang = sub.language || sub.codec;
+    return lang ? `內嵌：${base}（${lang}）` : `內嵌：${base}`;
+  };
+
+  const hideTopBar = isPlaying && !loading && !error && !controlsVisible;
 
   return (
     <div
       ref={containerRef}
-      className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center select-none"
+      onMouseMove={revealControls}
+      onTouchStart={revealControls}
+      className={`fixed inset-0 z-50 bg-black flex flex-col items-center justify-center select-none ${
+        hideTopBar ? 'cursor-none' : ''
+      }`}
     >
       {/* Top Control Bar */}
-      <div className="absolute top-0 left-0 right-0 z-20 p-4 sm:p-6 bg-gradient-to-b from-black/85 via-black/45 to-transparent flex flex-wrap items-center justify-between gap-3">
+      <div
+        ref={topBarRef}
+        onMouseEnter={() => {
+          hoveringTopBarRef.current = true;
+          clearHideTimer();
+          setControlsVisible(true);
+        }}
+        onMouseLeave={() => {
+          hoveringTopBarRef.current = false;
+          scheduleAutoHide();
+        }}
+        className={`absolute top-0 left-0 right-0 z-20 px-4 pt-3 pb-8 sm:px-6 sm:pt-4 sm:pb-10 bg-gradient-to-b from-[#0f0f10]/95 via-[#0f0f10]/75 to-transparent flex flex-wrap items-center justify-between gap-3 transition-[opacity,transform] duration-200 ease-cinema ${
+          hideTopBar ? 'opacity-0 -translate-y-2 pointer-events-none' : 'opacity-100 translate-y-0'
+        }`}
+      >
         <div className="flex items-center gap-3 min-w-0">
           <button
+            type="button"
             onClick={onClose}
-            className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-surface/80 hover:bg-slate-700 text-white flex items-center justify-center border border-white/10 flex-none"
-            title="返回媒體庫 (Esc)"
+            className="w-9 h-9 rounded-lg bg-surface/95 hover:bg-raised text-ink-primary flex items-center justify-center border border-border flex-none cinema-focus transition-colors duration-150 ease-cinema"
+            title="返回媒體庫（Esc）"
+            aria-label="返回媒體庫"
           >
-            ←
+            <ArrowLeft size={16} strokeWidth={1.5} />
           </button>
 
           {streamInfo && (
             <div className="min-w-0">
-              <h2 className="text-sm sm:text-base font-bold text-white truncate max-w-xs sm:max-w-lg">
+              <h2 className="text-sm sm:text-base font-medium text-ink-primary truncate max-w-[220px] sm:max-w-md leading-snug">
                 {streamInfo.media.title}
               </h2>
-              <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-400/30">
+              <div className="flex items-center gap-3 mt-1 flex-wrap text-xs font-mono tabular-nums">
+                <span className="text-ink-primary/85">
                   {modeLabelMap[streamInfo.decision.mode] || streamInfo.decision.mode}
                 </span>
-                <span className="text-[11px] text-slate-400 uppercase">
+                <span className="text-ink-secondary uppercase">
                   {streamInfo.media.video_codec} / {streamInfo.media.audio_codec}
                 </span>
-                <span className="text-[11px] text-slate-300 font-mono">
-                  {isPlaying ? '▶' : '⏸'} {formatDuration(currentTime)} / {formatDuration(duration)}
+                <span className="inline-flex items-center gap-1.5 text-ink-primary">
+                  {isPlaying ? (
+                    <Play size={12} strokeWidth={1.75} className="text-accent fill-current" />
+                  ) : (
+                    <Pause size={12} strokeWidth={1.75} className="text-ink-secondary" />
+                  )}
+                  <span>{formatDuration(currentTime)}</span>
+                  <span className="text-ink-muted">/</span>
+                  <span className="text-ink-primary/80">{formatDuration(duration)}</span>
                 </span>
               </div>
             </div>
@@ -532,98 +638,107 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
         {/* Right Controls: Quick Seek, Quality, Audio Track, Subtitles, Fullscreen */}
         <div className="flex items-center flex-wrap gap-2">
           <button
+            type="button"
             onClick={() => seekRelative(-10)}
-            className="px-2.5 py-1.5 rounded-lg bg-surface/85 hover:bg-slate-700 border border-border text-xs text-slate-200 font-mono"
-            title="倒退 10 秒 (←)"
+            className="h-8 px-2.5 rounded-lg bg-surface/95 hover:bg-raised border border-border text-xs text-ink-secondary hover:text-ink-primary font-mono tabular-nums inline-flex items-center gap-1.5 cinema-focus transition-colors duration-150 ease-cinema"
+            title="倒退 10 秒（←）"
           >
-            -10s
+            <RotateCcw size={13} strokeWidth={1.5} />
+            <span>10s</span>
           </button>
           <button
+            type="button"
             onClick={() => seekRelative(10)}
-            className="px-2.5 py-1.5 rounded-lg bg-surface/85 hover:bg-slate-700 border border-border text-xs text-slate-200 font-mono"
-            title="快轉 10 秒 (→)"
+            className="h-8 px-2.5 rounded-lg bg-surface/95 hover:bg-raised border border-border text-xs text-ink-secondary hover:text-ink-primary font-mono tabular-nums inline-flex items-center gap-1.5 cinema-focus transition-colors duration-150 ease-cinema"
+            title="快轉 10 秒（→）"
           >
-            +10s
+            <RotateCw size={13} strokeWidth={1.5} />
+            <span>10s</span>
           </button>
 
           {/* 畫質/頻寬選擇 */}
-          <select
+          <CinemaSelect
+            ariaLabel="畫質設定"
             value={quality}
-            onChange={(e) => handleQualityChange(e.target.value as 'original' | '1080p' | '720p')}
-            className="bg-surface/90 text-slate-200 border border-border rounded-lg px-2.5 py-1.5 text-xs font-medium focus:outline-none focus:border-primary"
-          >
-            <option value="original">畫質：原畫極速 (Direct/Remux)</option>
-            <option value="1080p">畫質：1080p 省流 (4 Mbps)</option>
-            <option value="720p">畫質：720p 極省流 (2 Mbps)</option>
-          </select>
+            onChange={(v) => handleQualityChange(v)}
+            options={[
+              { value: 'original', label: '畫質：原畫' },
+              { value: '1080p', label: '畫質：1080p（4 Mbps）' },
+              { value: '720p', label: '畫質：720p（2 Mbps）' },
+            ]}
+            maxWidthClass="max-w-[170px]"
+          />
 
           {/* 多音軌選擇 */}
           {audioTracks.length > 1 && (
-            <select
+            <CinemaSelect
+              ariaLabel="音軌選擇"
               value={selectedAudio}
-              onChange={(e) => handleAudioChange(parseInt(e.target.value, 10))}
-              className="bg-surface/90 text-slate-200 border border-border rounded-lg px-2.5 py-1.5 text-xs font-medium focus:outline-none focus:border-primary"
-            >
-              {audioTracks.map((a) => (
-                <option key={a.index} value={a.index}>
-                  音軌 {a.index + 1} [{a.language || '預設'}] {a.title || a.codec.toUpperCase()}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => handleAudioChange(v)}
+              options={audioTracks.map((a) => ({
+                value: a.index,
+                label: `音軌 ${a.index + 1} · ${a.language || '預設'} · ${a.title || a.codec.toUpperCase()}`,
+              }))}
+              maxWidthClass="max-w-[180px]"
+            />
           )}
 
           {/* 內外掛字幕選擇 */}
           {subtitles.length > 0 && (
             <>
-              <select
+              <CinemaSelect
+                ariaLabel="字幕軌道"
                 value={selectedSub}
-                onChange={(e) => handleSubtitleChange(e.target.value)}
-                className="bg-surface/90 text-slate-200 border border-border rounded-lg px-2.5 py-1.5 text-xs font-medium focus:outline-none focus:border-primary"
-              >
-                <option value="off">字幕：關閉</option>
-                {subtitles.map((sub) => (
-                  <option key={sub.id} value={sub.id}>
-                    {sub.is_external ? '📄 ' : '💬 '}
-                    {sub.title || `字幕 ${sub.index + 1}`} [{sub.language || sub.codec}]
-                  </option>
-                ))}
-              </select>
+                onChange={(v) => handleSubtitleChange(v)}
+                options={[
+                  { value: 'off', label: '字幕：關閉' },
+                  ...subtitles.map((sub) => ({
+                    value: sub.id,
+                    label: formatSubtitleOptionLabel(sub),
+                  })),
+                ]}
+                maxWidthClass="max-w-[180px]"
+              />
 
-              <select
-                aria-label="字幕大小"
+              <CinemaSelect
+                ariaLabel="字幕大小"
                 value={subtitleScale}
-                onChange={(e) => handleSubtitleScaleChange(Number(e.target.value))}
-                className="bg-surface/90 text-slate-200 border border-border rounded-lg px-2.5 py-1.5 text-xs font-medium focus:outline-none focus:border-primary"
-              >
-                <option value={75}>字體：小 (75%)</option>
-                <option value={100}>字體：標準 (100%)</option>
-                <option value={125}>字體：中大 (125%)</option>
-                <option value={150}>字體：大 (150%)</option>
-                <option value={180}>字體：特大 (180%)</option>
-                <option value={220}>字體：超大 (220%)</option>
-              </select>
+                onChange={(v) => handleSubtitleScaleChange(v)}
+                options={[
+                  { value: 75, label: '字體：75%' },
+                  { value: 100, label: '字體：100%' },
+                  { value: 125, label: '字體：125%' },
+                  { value: 150, label: '字體：150%' },
+                  { value: 180, label: '字體：180%' },
+                  { value: 220, label: '字體：220%' },
+                ]}
+                maxWidthClass="max-w-[120px]"
+              />
 
               {selectedSub !== 'off' && (
-                <div className="flex items-center rounded-lg bg-surface/90 border border-border overflow-hidden text-xs">
+                <div className="flex items-center h-8 rounded-lg bg-surface/95 border border-border overflow-hidden text-xs font-mono tabular-nums">
                   <button
+                    type="button"
                     onClick={() => adjustSubtitleOffset(-0.5)}
-                    className="px-2 py-1.5 hover:bg-slate-700 text-slate-200 font-mono border-r border-border"
+                    className="h-full px-2 hover:bg-raised text-ink-secondary hover:text-ink-primary border-r border-border transition-colors duration-150 ease-cinema"
                     title="字幕提前 0.5 秒（字幕太慢時點擊）"
                   >
                     -0.5s
                   </button>
                   <button
+                    type="button"
                     onClick={() => adjustSubtitleOffset(0, true)}
-                    className={`px-2 py-1.5 font-mono ${
-                      subtitleOffset !== 0 ? 'text-sky-300 font-bold' : 'text-slate-400'
-                    } hover:bg-slate-700`}
+                    className={`h-full px-2.5 hover:bg-raised transition-colors duration-150 ease-cinema ${
+                      subtitleOffset !== 0 ? 'text-accent font-medium' : 'text-ink-muted'
+                    }`}
                     title="點擊重置字幕時間偏移為 0.0 秒"
                   >
-                    字幕 {subtitleOffset > 0 ? `+${subtitleOffset.toFixed(1)}s` : `${subtitleOffset.toFixed(1)}s`}
+                    {subtitleOffset > 0 ? `+${subtitleOffset.toFixed(1)}s` : `${subtitleOffset.toFixed(1)}s`}
                   </button>
                   <button
+                    type="button"
                     onClick={() => adjustSubtitleOffset(0.5)}
-                    className="px-2 py-1.5 hover:bg-slate-700 text-slate-200 font-mono border-l border-border"
+                    className="h-full px-2 hover:bg-raised text-ink-secondary hover:text-ink-primary border-l border-border transition-colors duration-150 ease-cinema"
                     title="字幕延後 0.5 秒（字幕太快時點擊）"
                   >
                     +0.5s
@@ -634,11 +749,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
           )}
 
           <button
+            type="button"
             onClick={toggleFullscreen}
-            className="px-3 py-1.5 rounded-lg bg-surface/90 hover:bg-slate-700 text-xs font-medium text-slate-200 border border-border"
-            title="全螢幕切換 (F)"
+            className="h-8 px-2.5 rounded-lg bg-surface/95 hover:bg-raised text-xs font-medium text-ink-secondary hover:text-ink-primary border border-border inline-flex items-center gap-1.5 cinema-focus transition-colors duration-150 ease-cinema"
+            title="全螢幕切換（F）"
           >
-            {isFullscreen ? '縮小' : '全螢幕'}
+            {isFullscreen ? (
+              <Minimize2 size={14} strokeWidth={1.5} />
+            ) : (
+              <Maximize2 size={14} strokeWidth={1.5} />
+            )}
+            <span className="hidden md:inline">{isFullscreen ? '縮小' : '全螢幕'}</span>
+            <kbd className="hidden lg:inline px-1 py-0.5 rounded bg-raised border border-border text-[10px] font-mono text-ink-muted leading-none">
+              F
+            </kbd>
           </button>
         </div>
       </div>
@@ -670,43 +794,46 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
 
       {/* Seeking / Loading Spinner */}
       {(loading || seeking) && !error && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 pointer-events-none">
-          <div className="w-11 h-11 border-4 border-sky-400 border-t-transparent rounded-full animate-spin mb-2.5" />
-          <p className="text-xs sm:text-sm font-semibold text-slate-200 bg-black/60 px-3 py-1 rounded-full">
-            {loading ? '正在載入串流...' : '極速定位關鍵幀中...'}
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/45 pointer-events-none">
+          <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin mb-3" />
+          <p className="text-xs font-medium text-ink-primary bg-surface/90 border border-border px-3 py-1.5 rounded-lg">
+            {loading ? '載入串流中' : '定位畫面中'}
           </p>
         </div>
       )}
 
       {/* Error Overlay */}
       {error && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/85 p-6 text-center">
-          <p className="text-red-400 font-bold text-lg mb-2">播放發生錯誤</p>
-          <p className="text-sm text-slate-400 mb-6 max-w-md">{error}</p>
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-deepest/95 p-6 text-center">
+          <p className="text-negative font-medium text-base mb-2">播放發生錯誤</p>
+          <p className="text-sm text-ink-secondary mb-6 max-w-md leading-relaxed">{error}</p>
           <div className="flex flex-wrap items-center justify-center gap-3">
             {lastValidTimeRef.current > 0 && (
               <button
+                type="button"
                 onClick={() => {
                   savedTimeRef.current = lastValidTimeRef.current;
                   setError(null);
                   setReloadKey((k) => k + 1);
                 }}
-                className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs"
+                className="h-9 px-4 rounded-lg bg-ink-primary hover:bg-white text-deepest font-medium text-xs btn-highlight font-mono tabular-nums"
               >
-                回到上次播放位置 ({formatDuration(lastValidTimeRef.current)})
+                回到上次位置（{formatDuration(lastValidTimeRef.current)}）
               </button>
             )}
             {quality === 'original' && (
               <button
+                type="button"
                 onClick={() => handleQualityChange('1080p')}
-                className="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs"
+                className="h-9 px-4 rounded-lg bg-raised hover:bg-hover text-ink-primary font-medium text-xs border border-border-strong"
               >
-                切換為 1080p 兼容轉碼模式
+                切換為 1080p 兼容轉碼
               </button>
             )}
             <button
+              type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl bg-surface hover:bg-slate-800 text-xs font-medium text-white border border-border"
+              className="h-9 px-4 rounded-lg bg-surface hover:bg-raised text-xs font-medium text-ink-secondary hover:text-ink-primary border border-border"
             >
               返回媒體庫
             </button>

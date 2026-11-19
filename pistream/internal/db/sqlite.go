@@ -36,6 +36,7 @@ type MediaFile struct {
 	AudioTracksJSON string  `json:"audio_tracks_json"`
 	SubtitlesJSON   string  `json:"subtitles_json"`
 	ThumbReady      bool    `json:"thumb_ready"`
+	FileModTime     int64   `json:"file_mod_time"`
 }
 
 type MediaFileWithProgress struct {
@@ -108,6 +109,7 @@ func InitDB(dbPath string) (*Store, error) {
 		audio_tracks_json TEXT DEFAULT '[]',
 		subtitles_json TEXT DEFAULT '[]',
 		thumb_ready BOOLEAN NOT NULL DEFAULT 0,
+		file_mod_time INTEGER NOT NULL DEFAULT 0,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
@@ -127,6 +129,9 @@ func InitDB(dbPath string) (*Store, error) {
 	if _, err := conn.Exec(schema); err != nil {
 		return nil, fmt.Errorf("初始化 Schema 失敗: %w", err)
 	}
+
+	// 既有資料庫升級相容：若舊版資料表尚未包含 file_mod_time 欄位則補上（已存在時忽略錯誤）
+	_, _ = conn.Exec(`ALTER TABLE media_files ADD COLUMN file_mod_time INTEGER NOT NULL DEFAULT 0`)
 
 	return &Store{Conn: conn}, nil
 }
@@ -218,9 +223,9 @@ func (s *Store) UpsertMediaFile(m *MediaFile) error {
 	INSERT INTO media_files (
 		title, file_path, rel_path, rel_dir, file_size, container,
 		video_codec, audio_codec, width, height, duration_seconds,
-		bit_rate, audio_tracks_json, subtitles_json, thumb_ready, updated_at
+		bit_rate, audio_tracks_json, subtitles_json, thumb_ready, file_mod_time, updated_at
 	)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 	ON CONFLICT(file_path) DO UPDATE SET
 		title = excluded.title,
 		rel_path = excluded.rel_path,
@@ -236,12 +241,13 @@ func (s *Store) UpsertMediaFile(m *MediaFile) error {
 		audio_tracks_json = excluded.audio_tracks_json,
 		subtitles_json = excluded.subtitles_json,
 		thumb_ready = CASE WHEN excluded.thumb_ready = 1 THEN 1 ELSE media_files.thumb_ready END,
+		file_mod_time = CASE WHEN excluded.file_mod_time > 0 THEN excluded.file_mod_time ELSE media_files.file_mod_time END,
 		updated_at = CURRENT_TIMESTAMP;`
 
 	res, err := s.Conn.Exec(query,
 		m.Title, m.FilePath, m.RelPath, m.RelDir, m.FileSize, m.Container,
 		m.VideoCodec, m.AudioCodec, m.Width, m.Height, m.DurationSeconds,
-		m.BitRate, m.AudioTracksJSON, m.SubtitlesJSON, m.ThumbReady,
+		m.BitRate, m.AudioTracksJSON, m.SubtitlesJSON, m.ThumbReady, m.FileModTime,
 	)
 	if err != nil {
 		return err
@@ -292,24 +298,42 @@ func (s *Store) GetMediaFile(id int64) (*MediaFile, error) {
 	row := s.Conn.QueryRow(`
 		SELECT id, title, file_path, rel_path, rel_dir, file_size, container,
 		       video_codec, audio_codec, width, height, duration_seconds,
-		       bit_rate, audio_tracks_json, subtitles_json, thumb_ready
+		       bit_rate, audio_tracks_json, subtitles_json, thumb_ready,
+		       COALESCE(NULLIF(file_mod_time, 0), CAST(strftime('%s', updated_at) AS INTEGER))
 		FROM media_files WHERE id = ?`, id)
 	var m MediaFile
 	if err := row.Scan(
 		&m.ID, &m.Title, &m.FilePath, &m.RelPath, &m.RelDir, &m.FileSize, &m.Container,
 		&m.VideoCodec, &m.AudioCodec, &m.Width, &m.Height, &m.DurationSeconds,
-		&m.BitRate, &m.AudioTracksJSON, &m.SubtitlesJSON, &m.ThumbReady,
+		&m.BitRate, &m.AudioTracksJSON, &m.SubtitlesJSON, &m.ThumbReady, &m.FileModTime,
 	); err != nil {
 		return nil, err
 	}
 	return &m, nil
 }
 
-func (s *Store) ListMediaFilesForUser(userID int64, searchQuery string) ([]MediaFileWithProgress, error) {
+func resolveSortOrderClause(sortBy string) string {
+	switch sortBy {
+	case "date_desc":
+		return ` ORDER BY COALESCE(NULLIF(f.file_mod_time, 0), CAST(strftime('%s', f.updated_at) AS INTEGER)) DESC, f.id DESC`
+	case "date_asc":
+		return ` ORDER BY COALESCE(NULLIF(f.file_mod_time, 0), CAST(strftime('%s', f.updated_at) AS INTEGER)) ASC, f.id ASC`
+	case "name_desc":
+		return ` ORDER BY f.title COLLATE NOCASE DESC, f.id DESC`
+	case "size_desc":
+		return ` ORDER BY f.file_size DESC, f.title COLLATE NOCASE ASC`
+	default:
+		// 預設 name_asc
+		return ` ORDER BY f.rel_dir ASC, f.title COLLATE NOCASE ASC`
+	}
+}
+
+func (s *Store) ListMediaFilesForUser(userID int64, searchQuery string, sortBy string) ([]MediaFileWithProgress, error) {
 	query := `
 		SELECT f.id, f.title, f.file_path, f.rel_path, f.rel_dir, f.file_size, f.container,
 		       f.video_codec, f.audio_codec, f.width, f.height, f.duration_seconds,
 		       f.bit_rate, f.audio_tracks_json, f.subtitles_json, f.thumb_ready,
+		       COALESCE(NULLIF(f.file_mod_time, 0), CAST(strftime('%s', f.updated_at) AS INTEGER)),
 		       COALESCE(p.position_seconds, 0), COALESCE(p.is_watched, 0)
 		FROM media_files f
 		LEFT JOIN playback_progress p ON f.id = p.media_file_id AND p.user_id = ?
@@ -320,7 +344,7 @@ func (s *Store) ListMediaFilesForUser(userID int64, searchQuery string) ([]Media
 		query += ` WHERE f.title LIKE ? OR f.rel_path LIKE ? `
 		args = append(args, like, like)
 	}
-	query += ` ORDER BY f.rel_dir ASC, f.title COLLATE NOCASE ASC`
+	query += resolveSortOrderClause(sortBy)
 
 	rows, err := s.Conn.Query(query, args...)
 	if err != nil {
@@ -334,7 +358,7 @@ func (s *Store) ListMediaFilesForUser(userID int64, searchQuery string) ([]Media
 		if err := rows.Scan(
 			&item.ID, &item.Title, &item.FilePath, &item.RelPath, &item.RelDir, &item.FileSize, &item.Container,
 			&item.VideoCodec, &item.AudioCodec, &item.Width, &item.Height, &item.DurationSeconds,
-			&item.BitRate, &item.AudioTracksJSON, &item.SubtitlesJSON, &item.ThumbReady,
+			&item.BitRate, &item.AudioTracksJSON, &item.SubtitlesJSON, &item.ThumbReady, &item.FileModTime,
 			&item.PositionSeconds, &item.IsWatched,
 		); err != nil {
 			return nil, err
@@ -348,15 +372,16 @@ func (s *Store) ListMediaFilesForUser(userID int64, searchQuery string) ([]Media
 }
 
 // BrowseFolderForUser 回傳指定相對資料夾下的子資料夾清單與當前層級影片清單
-func (s *Store) BrowseFolderForUser(userID int64, folderRelPath string) (*FolderBrowseResult, error) {
+func (s *Store) BrowseFolderForUser(userID int64, folderRelPath string, sortBy string) (*FolderBrowseResult, error) {
 	cleanPath := strings.Trim(strings.ReplaceAll(folderRelPath, "\\", "/"), "/")
 
-	allFiles, err := s.ListMediaFilesForUser(userID, "")
+	allFiles, err := s.ListMediaFilesForUser(userID, "", sortBy)
 	if err != nil {
 		return nil, err
 	}
 
 	subFolderCounts := make(map[string]int)
+	subFolderLatestMod := make(map[string]int64)
 	var directFiles []MediaFileWithProgress
 
 	prefix := ""
@@ -369,14 +394,21 @@ func (s *Store) BrowseFolderForUser(userID int64, folderRelPath string) (*Folder
 			directFiles = append(directFiles, f)
 			continue
 		}
+		var subName string
 		if cleanPath == "" && f.RelDir != "" {
 			parts := strings.SplitN(f.RelDir, "/", 2)
-			subFolderCounts[parts[0]]++
+			subName = parts[0]
 		} else if cleanPath != "" && strings.HasPrefix(f.RelDir, prefix) {
 			rest := strings.TrimPrefix(f.RelDir, prefix)
 			if rest != "" {
 				parts := strings.SplitN(rest, "/", 2)
-				subFolderCounts[parts[0]]++
+				subName = parts[0]
+			}
+		}
+		if subName != "" {
+			subFolderCounts[subName]++
+			if f.FileModTime > subFolderLatestMod[subName] {
+				subFolderLatestMod[subName] = f.FileModTime
 			}
 		}
 	}
@@ -394,10 +426,23 @@ func (s *Store) BrowseFolderForUser(userID int64, folderRelPath string) (*Folder
 		})
 	}
 
-	// 按資料夾名稱排序
+	// 依據排序方式排列子資料夾（日期排序時依資料夾內最新檔案日期排列，否則依名稱排列）
 	for i := 0; i < len(folders); i++ {
 		for j := i + 1; j < len(folders); j++ {
-			if strings.ToLower(folders[i].Name) > strings.ToLower(folders[j].Name) {
+			swap := false
+			switch sortBy {
+			case "date_desc":
+				ti, tj := subFolderLatestMod[folders[i].Name], subFolderLatestMod[folders[j].Name]
+				swap = ti < tj || (ti == tj && strings.ToLower(folders[i].Name) > strings.ToLower(folders[j].Name))
+			case "date_asc":
+				ti, tj := subFolderLatestMod[folders[i].Name], subFolderLatestMod[folders[j].Name]
+				swap = ti > tj || (ti == tj && strings.ToLower(folders[i].Name) > strings.ToLower(folders[j].Name))
+			case "name_desc":
+				swap = strings.ToLower(folders[i].Name) < strings.ToLower(folders[j].Name)
+			default:
+				swap = strings.ToLower(folders[i].Name) > strings.ToLower(folders[j].Name)
+			}
+			if swap {
 				folders[i], folders[j] = folders[j], folders[i]
 			}
 		}
