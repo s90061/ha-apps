@@ -1,5 +1,7 @@
 import React from 'react';
+import { Film, Folder, LogOut, RefreshCw, Search, UserIcon } from './Icons';
 import { User } from '../types';
+import { BrandMark } from './BrandMark';
 
 interface NavbarProps {
   user: User;
@@ -25,91 +27,117 @@ export const Navbar: React.FC<NavbarProps> = ({
   onLogout,
 }) => {
   return (
-    <header className="sticky top-0 z-30 bg-background/90 backdrop-blur-xl border-b border-border">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
-        {/* Brand & View Mode Tabs */}
-        <div className="flex items-center gap-4 sm:gap-6">
-          <div
+    <header className="sticky top-0 z-30 bg-deepest border-b border-border">
+      <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
+        {/* Left: Brand & View Switcher */}
+        <div className="flex items-center gap-4 sm:gap-6 flex-none">
+          <button
+            type="button"
             onClick={() => onViewModeChange('folders')}
-            className="flex items-center gap-2.5 cursor-pointer"
+            className="flex items-center gap-2.5 text-left cinema-focus rounded-lg"
           >
-            <div className="w-9 h-9 rounded-xl bg-sky-500/20 border border-sky-400/30 flex items-center justify-center text-sky-400 font-bold">
-              ▶
-            </div>
-            <span className="font-bold text-lg tracking-tight text-white hidden sm:inline">
+            <BrandMark size={28} />
+            <span className="text-base font-medium text-ink-primary hidden sm:inline leading-none">
               PiStream
             </span>
-          </div>
+          </button>
 
-          <nav className="flex items-center bg-surface border border-border rounded-xl p-1">
+          <nav
+            aria-label="瀏覽檢視"
+            className="flex items-center bg-surface border border-border rounded-lg p-1 gap-1"
+          >
             <button
+              type="button"
               onClick={() => onViewModeChange('folders')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`h-7 px-3 rounded-md text-xs font-medium flex items-center gap-2 cinema-focus transition-colors duration-150 ease-cinema ${
                 viewMode === 'folders'
-                  ? 'bg-sky-500 text-slate-950 shadow'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-raised text-ink-primary btn-highlight'
+                  : 'text-ink-muted hover:text-ink-primary'
               }`}
             >
-              📁 資料夾瀏覽
+              <Folder size={15} strokeWidth={1.5} className={viewMode === 'folders' ? 'text-accent' : 'text-ink-muted'} />
+              <span>資料夾</span>
             </button>
             <button
+              type="button"
               onClick={() => onViewModeChange('all')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`h-7 px-3 rounded-md text-xs font-medium flex items-center gap-2 cinema-focus transition-colors duration-150 ease-cinema ${
                 viewMode === 'all'
-                  ? 'bg-sky-500 text-slate-950 shadow'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-raised text-ink-primary btn-highlight'
+                  : 'text-ink-muted hover:text-ink-primary'
               }`}
             >
-              🎬 全部影片
+              <Film size={15} strokeWidth={1.5} className={viewMode === 'all' ? 'text-accent' : 'text-ink-muted'} />
+              <span>全部影片</span>
             </button>
           </nav>
         </div>
 
-        {/* Search Input */}
-        <div className="flex-1 max-w-xs sm:max-w-sm">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => {
-              onSearchChange(e.target.value);
-              if (e.target.value.trim() && viewMode !== 'all') {
-                onViewModeChange('all');
-              }
-            }}
-            placeholder="搜尋影片檔名或路徑..."
-            className="w-full px-3.5 py-1.5 rounded-xl bg-surface border border-border text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-primary"
-          />
+        {/* Center: Search */}
+        <div className="flex-1 max-w-sm min-w-[140px]">
+          <div className="relative flex items-center">
+            <Search
+              size={15}
+              strokeWidth={1.5}
+              className="absolute left-3 text-ink-muted pointer-events-none"
+            />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => {
+                onSearchChange(e.target.value);
+                if (e.target.value.trim() && viewMode !== 'all') {
+                  onViewModeChange('all');
+                }
+              }}
+              placeholder="搜尋影片"
+              aria-label="搜尋影片"
+              className="w-full h-9 pl-9 pr-3 rounded-lg bg-surface border border-border text-sm text-ink-primary placeholder-ink-muted focus:outline-none focus:border-border-strong cinema-focus transition-colors duration-150 ease-cinema"
+            />
+          </div>
         </div>
 
-        {/* Actions & User Menu */}
-        <div className="flex items-center gap-2">
+        {/* Right: Actions & Account */}
+        <div className="flex items-center gap-2 flex-none">
           <button
+            type="button"
             onClick={onScan}
             disabled={scanning}
-            title="重新掃描樹莓派影片目錄"
-            className="px-3 py-1.5 rounded-xl bg-surface hover:bg-slate-800 border border-border text-xs font-medium text-slate-200 transition-all"
+            title="掃描媒體目錄"
+            className="h-9 px-3 rounded-lg bg-surface hover:bg-raised disabled:opacity-50 border border-border text-xs font-medium text-ink-secondary hover:text-ink-primary flex items-center gap-2 cinema-focus transition-colors duration-150 ease-cinema"
           >
-            {scanning ? '掃描中...' : '↻ 掃描'}
+            <RefreshCw
+              size={15}
+              strokeWidth={1.5}
+              className={`text-ink-muted ${scanning ? 'animate-spin' : ''}`}
+            />
+            <span className="hidden md:inline">{scanning ? '掃描中' : '掃描'}</span>
           </button>
 
           <button
+            type="button"
             onClick={onOpenUserModal}
-            className="px-3 py-1.5 rounded-xl bg-surface hover:bg-slate-800 border border-border text-xs font-medium text-sky-400 transition-all flex items-center gap-1.5"
+            title="帳號設定"
+            className="h-9 px-3 rounded-lg bg-surface hover:bg-raised border border-border text-xs font-medium text-ink-primary flex items-center gap-2 cinema-focus transition-colors duration-150 ease-cinema"
           >
-            <span>👤 {user.username}</span>
+            <UserIcon size={15} strokeWidth={1.5} className="text-ink-muted" />
+            <span>{user.username}</span>
             {user.is_admin && (
-              <span className="px-1.5 py-0.5 rounded bg-sky-500/20 text-[10px] text-sky-300">
+              <span className="px-1.5 py-0.5 rounded bg-raised border border-border text-xs text-ink-secondary leading-none hidden sm:inline">
                 管理員
               </span>
             )}
           </button>
 
           <button
+            type="button"
             onClick={onLogout}
-            title="登出帳號"
-            className="px-2.5 py-1.5 rounded-xl bg-surface hover:bg-red-500/20 border border-border hover:border-red-500/30 text-xs text-slate-400 hover:text-red-300 transition-all"
+            title="登出"
+            aria-label="登出"
+            className="h-9 px-2.5 rounded-lg bg-surface hover:bg-raised border border-border text-xs font-medium text-ink-muted hover:text-negative flex items-center gap-1.5 cinema-focus transition-colors duration-150 ease-cinema"
           >
-            登出
+            <LogOut size={15} strokeWidth={1.5} />
+            <span className="hidden lg:inline">登出</span>
           </button>
         </div>
       </div>

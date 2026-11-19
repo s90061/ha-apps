@@ -1,4 +1,5 @@
 import React from 'react';
+import { Check, Folder, Play } from './Icons';
 import { MediaFile } from '../types';
 import { resolveUrl } from '../services/api';
 
@@ -22,7 +23,9 @@ export function formatFileSize(bytes: number): string {
   const gb = bytes / (1024 * 1024 * 1024);
   if (gb >= 1) return `${gb.toFixed(1)} GB`;
   const mb = bytes / (1024 * 1024);
-  return `${mb.toFixed(0)} MB`;
+  if (mb >= 1) return `${mb.toFixed(0)} MB`;
+  const kb = bytes / 1024;
+  return `${kb.toFixed(0)} KB`;
 }
 
 export function getResolutionBadge(width: number, height: number): string {
@@ -34,94 +37,117 @@ export function getResolutionBadge(width: number, height: number): string {
   return '';
 }
 
+export function formatShortDate(epochSec?: number): string {
+  if (!epochSec || epochSec <= 0) return '';
+  const d = new Date(epochSec * 1000);
+  if (Number.isNaN(d.getTime())) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}/${m}/${day}`;
+}
+
 export const VideoCard: React.FC<VideoCardProps> = ({ file, onPlay, showFolderHint }) => {
   const resBadge = getResolutionBadge(file.width, file.height);
   const progressPct = file.progress_ratio
     ? Math.min(100, Math.max(0, Math.round(file.progress_ratio * 100)))
     : 0;
+  const sizeLabel = formatFileSize(file.file_size);
+  const dateLabel = formatShortDate(file.file_mod_time);
+  const codecLabel = file.video_codec ? file.video_codec.toUpperCase() : '';
+  const containerLabel = file.container ? file.container.toUpperCase() : '';
 
   return (
     <div
       onClick={() => onPlay(file.id)}
-      className="group cursor-pointer rounded-2xl bg-surface border border-border hover:border-sky-400/50 overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-sky-500/10 flex flex-col"
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onPlay(file.id);
+        }
+      }}
+      className="group cursor-pointer rounded-xl bg-surface border border-border hover:border-border-strong overflow-hidden flex flex-col cinema-focus transition-colors duration-150 ease-cinema"
     >
-      {/* 16:9 Thumbnail Area */}
-      <div className="relative aspect-video bg-slate-900 overflow-hidden">
+      {/* 16:9 Clean Thumbnail — Moments */}
+      <div className="relative aspect-video bg-deepest overflow-hidden">
         <img
           src={resolveUrl(`/api/thumbs/${file.id}`)}
           alt={file.title}
           loading="lazy"
-          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+          className="w-full h-full object-cover"
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 opacity-80 group-hover:opacity-60 transition-opacity" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#0f0f10]/60 via-transparent to-transparent" />
 
-        {/* Top Badges: Resolution & Codec */}
-        <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
-          {resBadge && (
-            <span
-              className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider backdrop-blur-md ${
-                resBadge === '4K'
-                  ? 'bg-amber-500/90 text-slate-950'
-                  : 'bg-sky-500/80 text-slate-950'
-              }`}
-            >
-              {resBadge}
-            </span>
-          )}
-          <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase bg-black/70 text-slate-200 border border-white/10 backdrop-blur-md">
-            {file.video_codec}
-          </span>
-        </div>
-
-        {/* Watched Checkmark */}
-        {file.is_watched && (
-          <div className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded-md bg-emerald-500/90 text-slate-950 text-[10px] font-bold">
-            ✓ 已看完
-          </div>
-        )}
-
-        {/* Play Hover Button */}
-        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-          <div className="w-12 h-12 rounded-full bg-sky-500 text-slate-950 flex items-center justify-center font-bold text-lg shadow-lg shadow-sky-500/40">
-            ▶
+        {/* Subtle Hover Play Indicator */}
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150 ease-cinema pointer-events-none">
+          <div className="w-10 h-10 rounded-full bg-ink-primary text-deepest flex items-center justify-center">
+            <Play size={16} strokeWidth={1.75} className="translate-x-[1px] fill-current" />
           </div>
         </div>
 
-        {/* Duration Bottom Right */}
-        <div className="absolute bottom-2.5 right-2.5 px-2 py-0.5 rounded bg-black/80 text-[11px] font-mono text-slate-200">
+        {/* Bottom-Right Mono Timecode (Signature) */}
+        <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-deepest/85 border border-border text-xs font-mono text-ink-primary tabular-nums leading-tight">
           {formatDuration(file.duration_seconds)}
         </div>
 
-        {/* Progress Bar */}
+        {/* 2px Warm Amber Progress Track */}
         {progressPct > 0 && !file.is_watched && (
-          <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20">
+          <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-ink-primary/15">
             <div
-              className="h-full bg-sky-400"
+              className="h-full bg-accent"
               style={{ width: `${progressPct}%` }}
             />
           </div>
         )}
       </div>
 
-      {/* Info Footer */}
-      <div className="p-3.5 flex-1 flex flex-col justify-between">
+      {/* Info Footer — Metadata relocated cleanly below thumbnail */}
+      <div className="p-4 flex-1 flex flex-col justify-between gap-3">
         <div>
           <h3
             title={file.title}
-            className="text-sm font-semibold text-slate-100 group-hover:text-sky-400 transition-colors line-clamp-2 leading-snug"
+            className="text-sm font-medium text-ink-primary group-hover:text-white line-clamp-2 leading-snug"
           >
             {file.title}
           </h3>
-          {showFolderHint && file.rel_dir && (
-            <p className="text-[11px] text-slate-500 mt-1 truncate">
-              📁 {file.rel_dir}
-            </p>
-          )}
+          {(showFolderHint && file.rel_dir) || dateLabel ? (
+            <div className="flex items-center justify-between gap-2 text-xs text-ink-muted mt-1.5 min-w-0">
+              {showFolderHint && file.rel_dir ? (
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Folder size={13} strokeWidth={1.5} className="flex-none text-ink-muted" />
+                  <span className="truncate">{file.rel_dir}</span>
+                </div>
+              ) : (
+                <span />
+              )}
+              {dateLabel && (
+                <span className="font-mono tabular-nums flex-none">{dateLabel}</span>
+              )}
+            </div>
+          ) : null}
         </div>
 
-        <div className="mt-2.5 flex items-center justify-between text-[11px] text-slate-400">
-          <span className="uppercase">{file.container}</span>
-          <span>{formatFileSize(file.file_size)}</span>
+        <div className="flex items-center justify-between gap-2 text-xs font-mono text-ink-muted tabular-nums">
+          <div className="flex items-center gap-2 min-w-0 truncate">
+            {resBadge && (
+              <span className={resBadge === '4K' ? 'text-accent font-medium' : 'text-ink-secondary'}>
+                {resBadge}
+              </span>
+            )}
+            {codecLabel && <span>{codecLabel}</span>}
+            {containerLabel && <span>{containerLabel}</span>}
+          </div>
+          <div className="flex items-center gap-2 flex-none">
+            {file.is_watched && (
+              <span className="inline-flex items-center gap-1 text-positive font-sans">
+                <Check size={13} strokeWidth={1.75} />
+                <span>已看</span>
+              </span>
+            )}
+            {sizeLabel && <span>{sizeLabel}</span>}
+          </div>
         </div>
       </div>
     </div>

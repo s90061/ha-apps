@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { FolderBrowseResult, MediaFile, User } from './types';
+import { FolderBrowseResult, MediaFile, SortOption, User } from './types';
 import { api } from './services/api';
 import { LoginView } from './components/LoginView';
 import { Navbar } from './components/Navbar';
@@ -8,6 +8,9 @@ import { FolderBrowser } from './components/FolderBrowser';
 import { VideoCard } from './components/VideoCard';
 import { VideoPlayer } from './components/VideoPlayer';
 import { UserAdminModal } from './components/UserAdminModal';
+import { SortSelect } from './components/SortSelect';
+
+const VALID_SORTS: SortOption[] = ['date_desc', 'date_asc', 'name_asc', 'name_desc', 'size_desc'];
 
 export const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -16,6 +19,15 @@ export const App: React.FC = () => {
   const [viewMode, setViewMode] = useState<'folders' | 'all'>('folders');
   const [currentFolder, setCurrentFolder] = useState<string>('');
   const [folderData, setFolderData] = useState<FolderBrowseResult | null>(null);
+  const [sortBy, setSortBy] = useState<SortOption>(() => {
+    const saved = localStorage.getItem('pistream_sort_by') as SortOption | null;
+    return saved && VALID_SORTS.includes(saved) ? saved : 'date_desc';
+  });
+
+  const handleSortChange = (next: SortOption) => {
+    setSortBy(next);
+    localStorage.setItem('pistream_sort_by', next);
+  };
 
   const [allFiles, setAllFiles] = useState<MediaFile[]>([]);
   const [continueItems, setContinueItems] = useState<MediaFile[]>([]);
@@ -41,11 +53,11 @@ export const App: React.FC = () => {
     api.getContinueWatching().then(setContinueItems).catch(() => {});
 
     if (viewMode === 'folders') {
-      api.browseFolder(currentFolder).then(setFolderData).catch(() => {});
+      api.browseFolder(currentFolder, sortBy).then(setFolderData).catch(() => {});
     } else {
-      api.listAllFiles(searchQuery).then(setAllFiles).catch(() => {});
+      api.listAllFiles(searchQuery, sortBy).then(setAllFiles).catch(() => {});
     }
-  }, [user, viewMode, currentFolder, searchQuery]);
+  }, [user, viewMode, currentFolder, searchQuery, sortBy]);
 
   useEffect(() => {
     refreshLibrary();
@@ -82,7 +94,7 @@ export const App: React.FC = () => {
   if (authChecking) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="w-10 h-10 border-4 border-sky-400 border-t-transparent rounded-full animate-spin" />
+        <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
@@ -92,7 +104,7 @@ export const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background text-slate-100 flex flex-col">
+    <div className="min-h-screen bg-background text-ink-primary flex flex-col">
       <Navbar
         user={user}
         viewMode={viewMode}
@@ -108,7 +120,7 @@ export const App: React.FC = () => {
         onLogout={handleLogout}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
+      <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-6 py-6 sm:py-8">
         {/* 個人化繼續觀看橫列 (僅在無搜尋字串時顯示) */}
         {!searchQuery.trim() && (
           <ContinueWatching
@@ -122,6 +134,8 @@ export const App: React.FC = () => {
         {viewMode === 'folders' && folderData && (
           <FolderBrowser
             data={folderData}
+            sortBy={sortBy}
+            onSortChange={handleSortChange}
             onNavigateFolder={(relPath) => setCurrentFolder(relPath)}
             onPlayVideo={(id) => setActiveFileId(id)}
           />
@@ -129,17 +143,21 @@ export const App: React.FC = () => {
 
         {/* 模式二：全部影片網格與即時搜尋 */}
         {viewMode === 'all' && (
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-base sm:text-lg font-bold text-white">
-                {searchQuery.trim()
-                  ? `🔍 搜尋「${searchQuery}」結果 (${allFiles.length})`
-                  : `🎬 全部影片 (${allFiles.length})`}
-              </h2>
+          <section>
+            <div className="flex items-center justify-between gap-4 mb-4">
+              <div className="flex items-baseline gap-2">
+                <h2 className="text-base font-medium text-ink-primary">
+                  {searchQuery.trim() ? `搜尋「${searchQuery}」` : '全部影片'}
+                </h2>
+                <span className="text-xs font-mono text-ink-muted tabular-nums">
+                  {allFiles.length}
+                </span>
+              </div>
+              <SortSelect value={sortBy} onChange={handleSortChange} />
             </div>
 
             {allFiles.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {allFiles.map((file) => (
                   <VideoCard
                     key={file.id}
@@ -150,16 +168,16 @@ export const App: React.FC = () => {
                 ))}
               </div>
             ) : (
-              <div className="py-20 text-center rounded-2xl bg-surface/50 border border-border">
-                <p className="text-base font-semibold text-slate-300 mb-1">
+              <div className="py-16 px-6 text-center rounded-xl bg-surface border border-border">
+                <p className="text-sm font-medium text-ink-primary mb-2">
                   找不到符合的影片
                 </p>
-                <p className="text-xs text-slate-500">
-                  請嘗試其他關鍵字或點擊右上角「↻ 掃描」更新媒體庫
+                <p className="text-xs text-ink-muted">
+                  請嘗試其他關鍵字，或點擊上方「掃描」更新片庫
                 </p>
               </div>
             )}
-          </div>
+          </section>
         )}
       </main>
 

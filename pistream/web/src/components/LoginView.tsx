@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { api } from '../services/api';
 import { User } from '../types';
+import { BrandMark } from './BrandMark';
 
 interface LoginViewProps {
   onLoginSuccess: (user: User) => void;
@@ -22,72 +23,84 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
       const res = await api.login(username.trim(), password);
       onLoginSuccess(res.user);
     } catch (err: any) {
-      setError(err.message || '登入失敗，請檢查帳號密碼');
+      setError(err.message || '登入失敗，請檢查帳號與密碼');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-md bg-surface/90 border border-border rounded-2xl p-8 shadow-2xl backdrop-blur-xl">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-11 h-11 rounded-xl bg-sky-500/20 border border-sky-400/30 flex items-center justify-center text-sky-400 font-bold text-xl">
-            ▶
-          </div>
+    <div className="min-h-screen bg-background flex items-center justify-center p-6">
+      <div className="w-full max-w-[400px] bg-surface border border-border rounded-xl p-8">
+        <div className="flex items-center gap-3 mb-8">
+          <BrandMark size={32} />
           <div>
-            <h1 className="text-xl font-bold text-white tracking-tight">PiStream 遠端影音中心</h1>
-            <p className="text-xs text-slate-400">Raspberry Pi 5 極速低延遲串流系統</p>
+            <h1 className="text-lg font-medium text-ink-primary leading-snug">
+              PiStream
+            </h1>
+            <p className="text-xs text-ink-muted leading-normal">
+              家庭影音庫與遠端串流播放
+            </p>
           </div>
         </div>
 
         {error && (
-          <div className="mb-4 px-4 py-3 rounded-xl bg-red-500/15 border border-red-500/30 text-red-300 text-xs font-medium">
+          <div className="mb-6 px-3 py-2.5 rounded-lg bg-negative/10 border border-negative/25 text-negative text-xs leading-normal">
             {error}
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-              使用者帳號
+            <label
+              htmlFor="login-username"
+              className="block text-xs font-medium text-ink-secondary mb-2"
+            >
+              帳號
             </label>
             <input
+              id="login-username"
               type="text"
               required
               autoFocus
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="請輸入帳號"
-              className="w-full px-4 py-2.5 rounded-xl bg-slate-900/90 border border-border text-sm text-white placeholder-slate-500 focus:outline-none focus:border-primary"
+              placeholder="輸入使用者帳號"
+              className="w-full h-10 px-3 rounded-lg bg-deepest border border-border text-sm text-ink-primary placeholder-ink-muted focus:outline-none focus:border-border-strong cinema-focus transition-colors duration-150 ease-cinema"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-              登入密碼
+            <label
+              htmlFor="login-password"
+              className="block text-xs font-medium text-ink-secondary mb-2"
+            >
+              密碼
             </label>
             <input
+              id="login-password"
               type="password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="請輸入密碼"
-              className="w-full px-4 py-2.5 rounded-xl bg-slate-900/90 border border-border text-sm text-white placeholder-slate-500 focus:outline-none focus:border-primary"
+              placeholder="輸入登入密碼"
+              className="w-full h-10 px-3 rounded-lg bg-deepest border border-border text-sm text-ink-primary placeholder-ink-muted focus:outline-none focus:border-border-strong cinema-focus transition-colors duration-150 ease-cinema"
             />
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-slate-950 font-bold text-sm transition-all shadow-lg shadow-sky-500/20"
-          >
-            {loading ? '驗證中...' : '登入觀看'}
-          </button>
+          <div className="pt-2">
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full h-10 rounded-lg bg-ink-primary hover:bg-white disabled:opacity-50 text-deepest font-medium text-sm btn-highlight cinema-focus transition-colors transition-transform duration-150 ease-cinema active:scale-[0.98]"
+            >
+              {loading ? '驗證中…' : '登入'}
+            </button>
+          </div>
         </form>
 
-        <p className="mt-6 text-center text-[11px] text-slate-500">
-          本系統採私密帳號制，如需開通帳號請聯繫系統管理員
+        <p className="mt-6 text-center text-xs text-ink-muted leading-normal">
+          本系統採私密帳號制，如需帳號請聯繫管理員
         </p>
       </div>
     </div>

@@ -40,10 +40,13 @@ export interface MediaFile {
   audio_tracks_json: string;
   subtitles_json: string;
   thumb_ready: boolean;
+  file_mod_time?: number;
   position_seconds?: number;
   is_watched?: boolean;
   progress_ratio?: number;
 }
+
+export type SortOption = 'date_desc' | 'date_asc' | 'name_asc' | 'name_desc' | 'size_desc';
 
 export interface FolderEntry {
   name: string;

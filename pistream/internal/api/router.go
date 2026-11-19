@@ -224,7 +224,8 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 	mux.HandleFunc("GET /api/library/folders", requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		u := auth.GetUser(r)
 		relPath := r.URL.Query().Get("path")
-		res, err := store.BrowseFolderForUser(u.UserID, relPath)
+		sortBy := r.URL.Query().Get("sort")
+		res, err := store.BrowseFolderForUser(u.UserID, relPath, sortBy)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -235,7 +236,8 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 	mux.HandleFunc("GET /api/library/files", requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		u := auth.GetUser(r)
 		q := r.URL.Query().Get("q")
-		files, err := store.ListMediaFilesForUser(u.UserID, q)
+		sortBy := r.URL.Query().Get("sort")
+		files, err := store.ListMediaFilesForUser(u.UserID, q, sortBy)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -277,7 +279,7 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 			return
 		}
 
-		// 若尚未產生縮圖，排入佇列並先回傳精緻 SVG 預覽圖
+		// 若尚未產生縮圖，排入佇列並先回傳消光石墨灰 SVG 佔位圖
 		media, err := store.GetMediaFile(fileID)
 		if err == nil {
 			scanner.QueueThumbnailJob(media.ID, media.FilePath, media.DurationSeconds, cfg.CacheDir, store)
@@ -285,16 +287,9 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 		w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360">
-			<defs>
-				<linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-					<stop offset="0%" stop-color="#0f172a"/>
-					<stop offset="50%" stop-color="#1e293b"/>
-					<stop offset="100%" stop-color="#090d16"/>
-				</linearGradient>
-			</defs>
-			<rect width="640" height="360" fill="url(#bg)"/>
-			<circle cx="320" cy="180" r="42" fill="#38bdf8" fill-opacity="0.15" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.4"/>
-			<polygon points="308,158 308,202 346,180" fill="#38bdf8" fill-opacity="0.85"/>
+			<rect width="640" height="360" fill="#19191b"/>
+			<rect x="276" y="136" width="88" height="88" rx="16" fill="#232325" stroke="#ededed" stroke-opacity="0.1" stroke-width="1.5"/>
+			<polygon points="310,162 310,198 340,180" fill="#85858b"/>
 		</svg>`
 		_, _ = w.Write([]byte(svg))
 	}))

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- Redesigned the PiStream web interface into a matte graphite home-cinema console with a single warm amber accent (`#e2a336`), uniform Lucide line icons, `Inter` + `Noto Sans TC` + `JetBrains Mono` typography (`tabular-nums`), and clean 16:9 thumbnails with specs relocated to the card footer.
+- Added file date sorting (`date_desc`, `date_asc`, `name_asc`, `name_desc`, `size_desc`) backed by filesystem `file_mod_time` (with automatic SQLite migration for existing databases), folder sorting by newest video date, and `YYYY/MM/DD` date indicators on video cards.
+- Replaced native `<select>` controls across library sorting and the video player with a custom `CinemaSelect` popover component to eliminate Windows Chrome vertical-alignment bugs and OS-native arrow/menu glitches.
+- Added automatic top-bar and cursor hiding after 2.5 seconds of inactivity during active video playback (working across OS fullscreen, Home Assistant Ingress, and mobile WebView) with instant mouse/touch/keyboard wake-up.
+
 ## 0.1.1
 
 - Fixed subtitle-to-video timeline desynchronization in `remux` (`-c:v copy`) mode by using `-copyts -start_at_zero` to preserve true keyframe PTS timestamps instead of stamping preceding keyframes with a synthetic `output_ts_offset`.
