@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4
+
+- Added a toggleable file-size filter control (`過濾`) to the left of the sort selector in the "All Videos" (`全部影片`) view to hide small video files below a customizable MB threshold (default `100 MB`, with quick presets `50 MB` / `100 MB` / `200 MB` / `500 MB` / `1 GB` and persistent preference), without affecting subtitle files.
+
 ## 0.1.3
 
 - Limited the "Continue Watching" (`繼續觀看`) list to the 4 most recently watched unfinished videos so it stays on a single clean row on desktop.
