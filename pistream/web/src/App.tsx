@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FolderBrowseResult, MediaFile, SortOption, User } from './types';
 import { api } from './services/api';
 import { LoginView } from './components/LoginView';
@@ -9,8 +9,11 @@ import { VideoCard } from './components/VideoCard';
 import { VideoPlayer } from './components/VideoPlayer';
 import { UserAdminModal } from './components/UserAdminModal';
 import { SortSelect } from './components/SortSelect';
+import { SizeFilterControl } from './components/SizeFilterControl';
 
 const VALID_SORTS: SortOption[] = ['date_desc', 'date_asc', 'name_asc', 'name_desc', 'size_desc'];
+const DEFAULT_MIN_SIZE_MB = 100;
+const SUBTITLE_EXT_RE = /\.(srt|vtt|ass|ssa)$/i;
 
 export const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -29,9 +32,42 @@ export const App: React.FC = () => {
     localStorage.setItem('pistream_sort_by', next);
   };
 
+  const [sizeFilterEnabled, setSizeFilterEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('pistream_size_filter_enabled') === '1';
+  });
+
+  const [minSizeMB, setMinSizeMB] = useState<number>(() => {
+    const raw = localStorage.getItem('pistream_size_filter_mb');
+    if (raw === null) return DEFAULT_MIN_SIZE_MB;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : DEFAULT_MIN_SIZE_MB;
+  });
+
+  const handleSizeFilterToggle = (next: boolean) => {
+    setSizeFilterEnabled(next);
+    localStorage.setItem('pistream_size_filter_enabled', next ? '1' : '0');
+  };
+
+  const handleMinSizeMBChange = (nextMB: number) => {
+    const clamped = Math.max(0, Math.round(nextMB));
+    setMinSizeMB(clamped);
+    localStorage.setItem('pistream_size_filter_mb', String(clamped));
+  };
+
   const [allFiles, setAllFiles] = useState<MediaFile[]>([]);
   const [continueItems, setContinueItems] = useState<MediaFile[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredAllFiles = useMemo(() => {
+    if (!sizeFilterEnabled || minSizeMB <= 0) return allFiles;
+    const minBytes = minSizeMB * 1024 * 1024;
+    return allFiles.filter((file) => {
+      if (SUBTITLE_EXT_RE.test(file.rel_path || file.title)) return true;
+      return file.file_size >= minBytes;
+    });
+  }, [allFiles, sizeFilterEnabled, minSizeMB]);
+
+  const hiddenByFilterCount = allFiles.length - filteredAllFiles.length;
 
   const [scanning, setScanning] = useState(false);
   const [activeFileId, setActiveFileId] = useState<number | null>(null);
@@ -144,21 +180,35 @@ export const App: React.FC = () => {
         {/* 模式二：全部影片網格與即時搜尋 */}
         {viewMode === 'all' && (
           <section>
-            <div className="flex items-center justify-between gap-4 mb-4">
+            <div className="flex items-center justify-between gap-4 flex-wrap mb-4">
               <div className="flex items-baseline gap-2">
                 <h2 className="text-base font-medium text-ink-primary">
                   {searchQuery.trim() ? `搜尋「${searchQuery}」` : '全部影片'}
                 </h2>
                 <span className="text-xs font-mono text-ink-muted tabular-nums">
-                  {allFiles.length}
+                  {filteredAllFiles.length}
                 </span>
+                {sizeFilterEnabled && hiddenByFilterCount > 0 && (
+                  <span className="text-xs text-ink-muted tabular-nums">
+                    · 已隱藏 {hiddenByFilterCount} 部
+                  </span>
+                )}
               </div>
-              <SortSelect value={sortBy} onChange={handleSortChange} />
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <SizeFilterControl
+                  enabled={sizeFilterEnabled}
+                  minSizeMB={minSizeMB}
+                  hiddenCount={hiddenByFilterCount}
+                  onToggle={handleSizeFilterToggle}
+                  onMinSizeChange={handleMinSizeMBChange}
+                />
+                <SortSelect value={sortBy} onChange={handleSortChange} />
+              </div>
             </div>
 
-            {allFiles.length > 0 ? (
+            {filteredAllFiles.length > 0 ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {allFiles.map((file) => (
+                {filteredAllFiles.map((file) => (
                   <VideoCard
                     key={file.id}
                     file={file}
@@ -166,6 +216,22 @@ export const App: React.FC = () => {
                     showFolderHint
                   />
                 ))}
+              </div>
+            ) : allFiles.length > 0 && sizeFilterEnabled ? (
+              <div className="py-16 px-6 text-center rounded-xl bg-surface border border-border">
+                <p className="text-sm font-medium text-ink-primary mb-2">
+                  所有影片皆小於 {minSizeMB} MB
+                </p>
+                <p className="text-xs text-ink-muted mb-4">
+                  目前已隱藏 {hiddenByFilterCount} 部影片，可調低過濾大小或暫時關閉過濾
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleSizeFilterToggle(false)}
+                  className="h-8 px-3 rounded-lg bg-raised hover:bg-raised/80 border border-border-strong text-xs font-medium text-ink-primary cinema-focus transition-colors duration-150"
+                >
+                  關閉過濾
+                </button>
               </div>
             ) : (
               <div className="py-16 px-6 text-center rounded-xl bg-surface border border-border">
