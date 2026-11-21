@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.12
+
+- Fixed Raspberry Pi 5 4K 10-bit HEVC hardware decode hitting `Cannot allocate memory` (ENOMEM) on Home Assistant OS's 64 MB `linux,cma` pool: removed `/dev/dma_heap/linux,cma` and `/dev/dma_heap/reserved` from `config.yaml` so `rpi-ffmpeg` avoids falling through to the small CMA heap when `/dev/dma_heap/vidbuf_cached` is absent on HAOS and instead uses `MMap` + `VIDIOC_EXPBUF` via `rpi-hevc-dec`'s BCM2712 IOMMU (full system RAM).
+- Limited DRM HEVC input decoder threads to `-threads 2` (before `-i`) to reduce DPB frame-buffer memory footprint and avoid contending with `libx264` encoding threads.
+
 ## 0.1.11
 
 - Enabled `udev: true` and explicit DMA-BUF heap device permissions (`/dev/dma_heap/vidbuf_cached`, `/dev/dma_heap/linux,cma`, `/dev/dma_heap/reserved`, `/dev/dma_heap/system`, `/dev/udmabuf`) in `config.yaml` so Raspberry Pi 5's `rpi-hevc-dec` (`v4l2request` / `libudev` + zero-copy DMABufs) can actually initialize inside Home Assistant OS containers without disabling Protection Mode.
