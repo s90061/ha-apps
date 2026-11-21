@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.11
+
+- Enabled `udev: true` and explicit DMA-BUF heap device permissions (`/dev/dma_heap/vidbuf_cached`, `/dev/dma_heap/linux,cma`, `/dev/dma_heap/reserved`, `/dev/dma_heap/system`, `/dev/udmabuf`) in `config.yaml` so Raspberry Pi 5's `rpi-hevc-dec` (`v4l2request` / `libudev` + zero-copy DMABufs) can actually initialize inside Home Assistant OS containers without disabling Protection Mode.
+- Added concise startup hardware-device access probing in `ha-entrypoint.sh` and live filtered FFmpeg `Hwaccel`/`v4l2`/`dma_heap` diagnostic logging in `HLSManager` (`-loglevel info -nostats` when `HW_ACCEL=drm`) so Home Assistant App logs clearly confirm whether Pi 5 HEVC hardware decoding engaged.
+
 ## 0.1.10
 
 - Removed the hardcoded Windows Firefox block from `detectHEVCHlsSupport()` so modern Windows Firefox (134+ with HEVC Video Extensions) can play 4K/1080p HEVC + EAC3/AC3 videos via zero-reencode `Remux` (`-c:v copy` + AAC audio, ~1–3% Pi 5 CPU) instead of falling back to full CPU video transcoding.

@@ -292,6 +292,9 @@ func TestBuildFFmpegArgsPi5LowCPU1080p(t *testing.T) {
 	if !strings.Contains(joined4K, "-hwaccel drm") {
 		t.Fatalf("預期 4K HEVC 開啟 drm 時包含 -hwaccel drm，實際參數: %s", joined4K)
 	}
+	if !strings.Contains(joined4K, "-loglevel info -nostats") {
+		t.Fatalf("預期啟用 drm 硬解時使用 -loglevel info -nostats 以記錄硬解診斷行，實際參數: %s", joined4K)
+	}
 	if !strings.Contains(joined4K, "scale='min(1920,iw)':-2:flags=fast_bilinear") {
 		t.Fatalf("預期 4K 轉 1080p 啟用 fast_bilinear 縮放，實際參數: %s", joined4K)
 	}
@@ -309,6 +312,17 @@ func TestBuildFFmpegArgsPi5LowCPU1080p(t *testing.T) {
 	})
 	if strings.Contains(strings.Join(argsH264, " "), "-hwaccel drm") {
 		t.Fatalf("Pi 5 無 H.264 硬解，H.264 轉碼不應啟用 -hwaccel drm")
+	}
+
+	// 4. 驗證 FFmpeg 硬解診斷過濾器只攔截關鍵訊息、不洗版一般資訊行
+	if !shouldLogFFmpegDiagnostic("[hevc @ 0x1234] Hwaccel V4L2 HEVC stateless V4; devices: /dev/media2,/dev/video19; buffers: src DMABuf, dst DMABuf") {
+		t.Fatalf("預期應擷取 Hwaccel V4L2 HEVC stateless 確認行")
+	}
+	if !shouldLogFFmpegDiagnostic("Unable to open any dma_heap device") {
+		t.Fatalf("預期應擷取 dma_heap 錯誤行")
+	}
+	if shouldLogFFmpegDiagnostic("Stream #0:0: Video: hevc (Main 10), yuv420p10le, 3840x2160") {
+		t.Fatalf("一般串流資訊行不應被當作硬解診斷訊息洗版")
 	}
 }
 

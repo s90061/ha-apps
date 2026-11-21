@@ -1,9 +1,11 @@
 package stream
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"os/exec"
@@ -315,11 +317,22 @@ func (m *HLSManager) restartFFmpegLocked(sess *HLSSession, startSeg int) {
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	var stderrBuf bytes.Buffer
-	cmd.Stderr = &stderrBuf
+	stderrPipe, pipeErr := cmd.StderrPipe()
+	if pipeErr != nil {
+		cmd.Stderr = &stderrBuf
+	}
 	sess.Cmd = cmd
 
-	fmt.Printf("[HLSManager] Session=%s 啟動 FFmpeg (Mode=%s, Quality=%s, Audio=%d, 跳轉至 %.1fs / Seg=%d)\n",
-		sess.SessionID, sess.Mode, sess.Quality, sess.AudioTrack, startTime, startSeg)
+	hwLabel := hwAccel
+	if hwLabel == "" {
+		hwLabel = "none"
+	}
+	codecLabel := sess.Media.VideoCodec
+	if codecLabel == "" {
+		codecLabel = "unknown"
+	}
+	fmt.Printf("[HLSManager] Session=%s 啟動 FFmpeg (Mode=%s, Quality=%s, Codec=%s, HwAccel=%s, Audio=%d, 跳轉至 %.1fs / Seg=%d)\n",
+		sess.SessionID, sess.Mode, sess.Quality, codecLabel, hwLabel, sess.AudioTrack, startTime, startSeg)
 
 	if err := cmd.Start(); err != nil {
 		fmt.Printf("[HLSManager] 啟動 FFmpeg 失敗: %v\n", err)
@@ -327,17 +340,66 @@ func (m *HLSManager) restartFFmpegLocked(sess *HLSSession, startSeg int) {
 		return
 	}
 
-	go func(c *exec.Cmd, done chan struct{}, cctx context.Context, errBuf *bytes.Buffer) {
+	go func(c *exec.Cmd, done chan struct{}, cctx context.Context, sessionID string, pipe io.ReadCloser, errBuf *bytes.Buffer) {
+		var tailLines []string
+		if pipe != nil {
+			scanner := bufio.NewScanner(pipe)
+			scanner.Buffer(make([]byte, 0, 16*1024), 64*1024)
+			printedDiag := 0
+			for scanner.Scan() {
+				line := strings.TrimSpace(scanner.Text())
+				if line == "" {
+					continue
+				}
+				tailLines = append(tailLines, line)
+				if len(tailLines) > 20 {
+					tailLines = tailLines[len(tailLines)-20:]
+				}
+				if printedDiag < 12 && shouldLogFFmpegDiagnostic(line) {
+					fmt.Printf("[HLSManager] Session=%s [ffmpeg] %s\n", sessionID, line)
+					printedDiag++
+				}
+			}
+		}
+
 		waitErr := c.Wait()
 		if waitErr != nil && cctx.Err() == nil {
-			errMsg := strings.TrimSpace(errBuf.String())
+			errMsg := strings.TrimSpace(strings.Join(tailLines, " | "))
+			if errMsg == "" {
+				errMsg = strings.TrimSpace(errBuf.String())
+			}
 			if len(errMsg) > 400 {
 				errMsg = errMsg[len(errMsg)-400:]
 			}
 			fmt.Printf("[HLSManager] FFmpeg 異常結束 (%v): %s\n", waitErr, errMsg)
 		}
 		close(done)
-	}(cmd, sess.ProcessDone, ctx, &stderrBuf)
+	}(cmd, sess.ProcessDone, ctx, sess.SessionID, stderrPipe, &stderrBuf)
+}
+
+func shouldLogFFmpegDiagnostic(line string) bool {
+	lower := strings.ToLower(line)
+	for _, kw := range []string{
+		"hwaccel",
+		"v4l2",
+		"dma_heap",
+		"dma-heap",
+		"dmabuf",
+		"drm_prime",
+		"hwcontext_drm",
+		"rpi-hevc",
+		"cma_alloc",
+		"permission denied",
+		"operation not permitted",
+		"falling back",
+		"unable to open",
+		"unable to find",
+	} {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // pruneOldSegmentsLocked 滑動視窗回收機制：自動刪除遠離播放頭的舊 .ts 切片，防止 4K 長片塞爆樹莓派 /dev/shm

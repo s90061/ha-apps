@@ -147,6 +147,31 @@ export WEB_DIR="/app/web/dist"
 export SEGMENT_DURATION="${seg_dur_opt}"
 export MAX_KEEP_SEGMENTS="${max_keep_opt}"
 
+probe_dev_access() {
+  local pattern="$1"
+  local out=""
+  local dev name status
+  shopt -s nullglob
+  # shellcheck disable=SC2206
+  local matches=( ${pattern} )
+  shopt -u nullglob
+  for dev in "${matches[@]}"; do
+    [[ -e "${dev}" ]] || continue
+    name="$(basename "${dev}")"
+    if ( : <> "${dev}" ) 2>/dev/null; then
+      status="rw"
+    else
+      status="blocked"
+    fi
+    if [[ -n "${out}" ]]; then
+      out="${out},${name}(${status})"
+    else
+      out="${name}(${status})"
+    fi
+  done
+  printf '%s' "${out:-none}"
+}
+
 if [[ "${hw_hevc_opt}" == "true" ]]; then
   if [[ -d /dev/dri ]] || compgen -G "/dev/video*" >/dev/null 2>&1; then
     export HW_ACCEL="drm"
@@ -154,6 +179,15 @@ if [[ "${hw_hevc_opt}" == "true" ]]; then
     unset HW_ACCEL
     printf '[ha-init] hw_hevc_decode enabled but no /dev/dri or /dev/video* device found; falling back to CPU decode\n'
   fi
+  udev_status="no"
+  if [[ -d /run/udev ]]; then
+    udev_status="yes"
+  fi
+  media_status="$(probe_dev_access '/dev/media*')"
+  dma_status="$(probe_dev_access '/dev/dma_heap/* /dev/udmabuf')"
+  video19_status="$(probe_dev_access '/dev/video19')"
+  printf '[ha-init] HW HEVC probe: udev=%s media=%s video19=%s dma_heap=%s\n' \
+    "${udev_status}" "${media_status}" "${video19_status}" "${dma_status}"
 else
   unset HW_ACCEL
 fi
