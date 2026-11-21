@@ -23,6 +23,19 @@ func isBrowserNativeAudio(codec string) bool {
 	}
 }
 
+func isBrowserNativeAudioWithCaps(codec string, allowEAC3 bool) bool {
+	if isBrowserNativeAudio(codec) {
+		return true
+	}
+	if allowEAC3 {
+		switch strings.ToLower(codec) {
+		case "eac3", "ec-3":
+			return true
+		}
+	}
+	return false
+}
+
 func isDirectPlayContainer(container string) bool {
 	switch strings.ToLower(container) {
 	case "mp4", "m4v", "webm", "mov":
@@ -48,9 +61,13 @@ func DecideStreamMode(media *db.MediaFile, sessionID string, quality string, aud
 	return DecideStreamModeWithCaps(media, sessionID, quality, audioTrack, allowHEVC, allowHEVC)
 }
 
-// DecideStreamModeWithCaps 區分瀏覽器原生直連 (Direct Play) 與 HLS MSE (Remux) 的 HEVC 硬解支援度，
-// 避免像 Windows Firefox 等支援 MP4 HEVC 直連但不支援 MSE HEVC 的瀏覽器誤退回樹莓派 CPU 轉碼
+// DecideStreamModeWithCaps 區分瀏覽器原生直連 (Direct Play) 與 HLS MSE (Remux) 的 HEVC 硬解支援度
 func DecideStreamModeWithCaps(media *db.MediaFile, sessionID string, quality string, audioTrack int, allowHEVCDirect bool, allowHEVCHLS bool) DecisionResult {
+	return DecideStreamModeWithAllCaps(media, sessionID, quality, audioTrack, allowHEVCDirect, allowHEVCHLS, false)
+}
+
+// DecideStreamModeWithAllCaps 同時考量 Direct Play HEVC、HLS MSE HEVC 與瀏覽器原生 EAC3 支援度
+func DecideStreamModeWithAllCaps(media *db.MediaFile, sessionID string, quality string, audioTrack int, allowHEVCDirect bool, allowHEVCHLS bool, allowEAC3 bool) DecisionResult {
 	if quality == "" {
 		quality = "original"
 	}
@@ -66,12 +83,13 @@ func DecideStreamModeWithCaps(media *db.MediaFile, sessionID string, quality str
 	isHEVC := vCodec == "hevc" || vCodec == "h265"
 	videoSupportedDirect := isH264 || vCodec == "vp9" || vCodec == "av1" || (isHEVC && allowHEVCDirect)
 	videoSupportedRemux := isH264 || (isHEVC && allowHEVCHLS)
+	audioSupportedDirect := isBrowserNativeAudioWithCaps(aCodec, allowEAC3)
 
 	// 若使用者主動選擇「原畫極速 (original)」
 	if quality == "original" {
 		// Tier 1: HTTP 206 Partial Content 原生直連 (0% CPU，中間時段毫秒級跳轉)
 		// 條件：相容容器 (MP4/WebM/MOV)、使用預設第一音軌、音訊為瀏覽器原生支援，且視訊為 H.264/VP9/AV1 或瀏覽器支援之 HEVC
-		if audioTrack == 0 && isDirectPlayContainer(container) && videoSupportedDirect && isBrowserNativeAudio(aCodec) {
+		if audioTrack == 0 && isDirectPlayContainer(container) && videoSupportedDirect && audioSupportedDirect {
 			return DecisionResult{
 				Mode:       "direct",
 				Quality:    "original",
@@ -81,7 +99,7 @@ func DecideStreamModeWithCaps(media *db.MediaFile, sessionID string, quality str
 		}
 
 		// Tier 2: Zero-Reencode Remux (-c:v copy 免重編碼極速換殼，僅轉換音軌與容器)
-		// 條件：視訊為 H.264，或瀏覽器支援硬解之 HEVC（例如 1080p MKV H.264/HEVC + AC3/DTS/AAC，或多音軌切換）
+		// 條件：視訊為 H.264，或瀏覽器支援硬解之 HEVC（例如 4K/1080p HEVC + EAC3/AC3/DTS，或多音軌切換）
 		if videoSupportedRemux {
 			return DecisionResult{
 				Mode:       "remux",
@@ -102,7 +120,7 @@ func DecideStreamModeWithCaps(media *db.MediaFile, sessionID string, quality str
 	if quality == "1080p" && media.Width > 0 && media.Width <= 1920 && (media.Height == 0 || media.Height <= 1088) {
 		bitRate := effectiveBitRate(media)
 		if bitRate >= 0 && bitRate <= 8_000_000 {
-			if audioTrack == 0 && isDirectPlayContainer(container) && videoSupportedDirect && isBrowserNativeAudio(aCodec) {
+			if audioTrack == 0 && isDirectPlayContainer(container) && videoSupportedDirect && audioSupportedDirect {
 				return DecisionResult{
 					Mode:       "direct",
 					Quality:    "1080p",

@@ -32,15 +32,15 @@ export function detectHEVCDirectSupport(): boolean {
 }
 
 // detectHEVCHlsSupport 偵測瀏覽器 HLS (MSE / Safari 原生 HLS) 是否支援 HEVC 免重編碼換殼 (Remux)
+// 不再寫死排除 Windows Firefox：現代 Firefox 134+ 搭配系統 HEVC 擴充可正常透過 MSE 硬解 HEVC，
+// 若個別裝置實際解碼失敗，VideoPlayer 亦有自動降級至 H.264 轉碼的保護機制
 export function detectHEVCHlsSupport(): boolean {
   try {
-    if (typeof navigator !== 'undefined' && /\(Windows.+Firefox\//i.test(navigator.userAgent)) {
-      return false;
-    }
     if (typeof window !== 'undefined' && 'MediaSource' in window && typeof MediaSource.isTypeSupported === 'function') {
       if (
         MediaSource.isTypeSupported('video/mp4; codecs="hev1.1.6.L93.B0"') ||
-        MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L93.B0"')
+        MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L93.B0"') ||
+        MediaSource.isTypeSupported('video/mp4; codecs="hvc1.2.4.L120.90"')
       ) {
         return true;
       }
@@ -54,6 +54,17 @@ export function detectHEVCHlsSupport(): boolean {
         return true;
       }
     }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
+// detectEAC3Support 偵測瀏覽器是否原生支援杜比數位+ (EAC3 / Dolby Digital Plus) 音訊解碼
+export function detectEAC3Support(): boolean {
+  try {
+    const v = document.createElement('video');
+    return v.canPlayType('audio/mp4; codecs="ec-3"') === 'probably';
   } catch {
     // ignore
   }
@@ -148,9 +159,10 @@ export const api = {
     audioTrack: number,
     allowHEVCDirect: boolean,
     allowHEVCHls: boolean = allowHEVCDirect,
+    allowEAC3: boolean = false,
   ) =>
     request<StreamInfo>(
-      `/api/stream/${fileId}/info?session=${encodeURIComponent(session)}&quality=${encodeURIComponent(quality)}&audio=${audioTrack}&hevc=${allowHEVCDirect ? '1' : '0'}&hevc_hls=${allowHEVCHls ? '1' : '0'}`,
+      `/api/stream/${fileId}/info?session=${encodeURIComponent(session)}&quality=${encodeURIComponent(quality)}&audio=${audioTrack}&hevc=${allowHEVCDirect ? '1' : '0'}&hevc_hls=${allowHEVCHls ? '1' : '0'}&eac3=${allowEAC3 ? '1' : '0'}`,
     ),
 
   reportProgress: (fileId: number, positionSeconds: number) =>

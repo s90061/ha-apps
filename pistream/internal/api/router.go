@@ -324,8 +324,9 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 		if rawHLS := r.URL.Query().Get("hevc_hls"); rawHLS != "" {
 			allowHEVCHLS = rawHLS == "1" || rawHLS == "true"
 		}
+		allowEAC3 := r.URL.Query().Get("eac3") == "1" || r.URL.Query().Get("eac3") == "true"
 
-		decision := stream.DecideStreamModeWithCaps(media, sessionID, quality, audioTrack, allowHEVCDirect, allowHEVCHLS)
+		decision := stream.DecideStreamModeWithAllCaps(media, sessionID, quality, audioTrack, allowHEVCDirect, allowHEVCHLS, allowEAC3)
 		if decision.Mode == "direct" {
 			// 若由 HLS 轉碼/換殼切回原生直連 (direct)，立刻終止背景 FFmpeg 行程釋放 CPU
 			hlsMgr.StopSession(sessionID, false)

@@ -3,7 +3,7 @@ import Hls from 'hls.js';
 import { ArrowLeft, Maximize2, Minimize2, Pause, Play, RotateCcw, RotateCw } from './Icons';
 import { CinemaSelect } from './CinemaSelect';
 import { AudioTrack, StreamInfo, SubtitleTrack } from '../types';
-import { api, detectHEVCDirectSupport, detectHEVCHlsSupport, resolveUrl } from '../services/api';
+import { api, detectEAC3Support, detectHEVCDirectSupport, detectHEVCHlsSupport, resolveUrl } from '../services/api';
 import { formatDuration } from './VideoCard';
 
 interface VideoPlayerProps {
@@ -169,12 +169,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     let isMounted = true;
     const allowHEVCDirect = detectHEVCDirectSupport() && !forceH264;
     const allowHEVCHls = detectHEVCHlsSupport() && !forceH264;
+    const allowEAC3 = detectEAC3Support();
 
     setLoading(true);
     setError(null);
 
     api
-      .getStreamInfo(fileId, sessionRef.current, quality, selectedAudio, allowHEVCDirect, allowHEVCHls)
+      .getStreamInfo(fileId, sessionRef.current, quality, selectedAudio, allowHEVCDirect, allowHEVCHls, allowEAC3)
       .then((info) => {
         if (!isMounted) return;
         setStreamInfo(info);

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.10
+
+- Removed the hardcoded Windows Firefox block from `detectHEVCHlsSupport()` so modern Windows Firefox (134+ with HEVC Video Extensions) can play 4K/1080p HEVC + EAC3/AC3 videos via zero-reencode `Remux` (`-c:v copy` + AAC audio, ~1–3% Pi 5 CPU) instead of falling back to full CPU video transcoding.
+- Added browser native Dolby Digital Plus (`EAC3` / `ec-3`) detection (`detectEAC3Support()`) so browsers with native EAC3 support (e.g. Edge/Safari with Dolby) can play `HEVC + EAC3` `.mp4` files directly via `Direct Play` (0% Pi 5 CPU).
+
 ## 0.1.9
 
 - Enabled native Raspberry Pi 5 4Kp60 HEVC (`rpi-hevc-dec` / V4L2-request DRM) hardware decoding for HEVC transcoding: switched runtime to Debian Trixie with Raspberry Pi official patched `ffmpeg` (`7.1.x+rpt`), added `video: true` and `hw_hevc_decode` option (default `true`), and added automatic runtime fallback to CPU software decoding if hardware decode fails on any stream.
