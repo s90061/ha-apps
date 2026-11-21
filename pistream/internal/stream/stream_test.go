@@ -110,6 +110,35 @@ func TestDecideStreamMode(t *testing.T) {
 	if res8.Mode != "transcode" {
 		t.Fatalf("預期 25 Mbps 高碼率 1080p MKV 選 1080p 省流時為 transcode，實際為 %s", res8.Mode)
 	}
+
+	// 9. Windows Firefox 情境 (allowHEVCDirect=true, allowHEVCHLS=false)：
+	//    4K HEVC MP4 仍應走 Direct Play (0% Pi 5 CPU)，而 4K HEVC MKV 則安全走 Transcode
+	mp4HEVC4K := &db.MediaFile{
+		ID:         9,
+		Container:  "mp4",
+		VideoCodec: "hevc",
+		AudioCodec: "aac",
+		Width:      3840,
+		Height:     2160,
+		BitRate:    22_000_000,
+	}
+	res9Direct := DecideStreamModeWithCaps(mp4HEVC4K, "sess1", "original", 0, true, false)
+	if res9Direct.Mode != "direct" {
+		t.Fatalf("預期 Windows Firefox 上 4K HEVC MP4 原畫維持 direct，實際為 %s", res9Direct.Mode)
+	}
+	mkvHEVC4K := &db.MediaFile{
+		ID:         10,
+		Container:  "mkv",
+		VideoCodec: "hevc",
+		AudioCodec: "ac3",
+		Width:      3840,
+		Height:     2160,
+		BitRate:    22_000_000,
+	}
+	res9Mkv := DecideStreamModeWithCaps(mkvHEVC4K, "sess1", "original", 0, true, false)
+	if res9Mkv.Mode != "transcode" {
+		t.Fatalf("預期不支援 MSE HEVC 時 4K HEVC MKV 為 transcode，實際為 %s", res9Mkv.Mode)
+	}
 }
 
 func TestBuildFFmpegArgsSeekAndOffset(t *testing.T) {
@@ -226,7 +255,7 @@ func TestBuildFFmpegArgsPi5LowCPU1080p(t *testing.T) {
 		t.Fatalf("原片寬度已為 1920 時，轉 1080p 不應掛載冗餘的 -vf scale 濾鏡，實際參數: %s", joined1080)
 	}
 
-	// 2. 4K 原片 (SourceWidth=3840) 轉 1080p：應啟用 fast_bilinear 快速縮放濾鏡
+	// 2. 4K HEVC 原片 (SourceWidth=3840, HwAccel=drm) 轉 1080p：應啟用 -hwaccel drm 與 fast_bilinear 快速縮放濾鏡
 	args4K := BuildFFmpegArgs(TranscodeParams{
 		InputFile:    "/media/movie_4k.mkv",
 		OutputDir:    "/dev/shm/out",
@@ -235,10 +264,30 @@ func TestBuildFFmpegArgsPi5LowCPU1080p(t *testing.T) {
 		Quality:      "1080p",
 		SourceWidth:  3840,
 		SourceHeight: 2160,
+		SourceCodec:  "hevc",
+		HwAccel:      "drm",
 	})
 	joined4K := strings.Join(args4K, " ")
+	if !strings.Contains(joined4K, "-hwaccel drm") {
+		t.Fatalf("預期 4K HEVC 開啟 drm 時包含 -hwaccel drm，實際參數: %s", joined4K)
+	}
 	if !strings.Contains(joined4K, "scale='min(1920,iw)':-2:flags=fast_bilinear") {
 		t.Fatalf("預期 4K 轉 1080p 啟用 fast_bilinear 縮放，實際參數: %s", joined4K)
+	}
+
+	// 3. H.264 原片即使 HwAccel=drm 也不應傳入 -hwaccel drm（Pi 5 僅有 HEVC 硬解）
+	argsH264 := BuildFFmpegArgs(TranscodeParams{
+		InputFile:   "/media/movie_1080p.mkv",
+		OutputDir:   "/dev/shm/out",
+		SegmentDur:  4,
+		Mode:        "transcode",
+		Quality:     "720p",
+		SourceWidth: 1920,
+		SourceCodec: "h264",
+		HwAccel:     "drm",
+	})
+	if strings.Contains(strings.Join(argsH264, " "), "-hwaccel drm") {
+		t.Fatalf("Pi 5 無 H.264 硬解，H.264 轉碼不應啟用 -hwaccel drm")
 	}
 }
 

@@ -55,6 +55,7 @@ jwt_secret_opt="$(json_opt jwt_secret "")"
 seg_dur_opt="$(json_opt segment_duration "4")"
 max_keep_opt="$(json_opt max_keep_segments "10")"
 storage_opt="$(json_opt transcode_storage "auto")"
+hw_hevc_opt="$(json_opt hw_hevc_decode "true")"
 
 if [[ -z "${admin_user_opt// /}" ]]; then
   admin_user_opt="admin"
@@ -146,7 +147,18 @@ export WEB_DIR="/app/web/dist"
 export SEGMENT_DURATION="${seg_dur_opt}"
 export MAX_KEEP_SEGMENTS="${max_keep_opt}"
 
-printf '[ha-init] Starting PiStream v%s (MEDIA_DIR=%s, TRANSCODE_TEMP_DIR=%s, SEGMENT_DURATION=%ss, MAX_KEEP_SEGMENTS=%s)\n' \
-  "${APP_VERSION:-dev}" "${MEDIA_DIR}" "${TRANSCODE_TEMP_DIR}" "${SEGMENT_DURATION}" "${MAX_KEEP_SEGMENTS}"
+if [[ "${hw_hevc_opt}" == "true" ]]; then
+  if [[ -d /dev/dri ]] || compgen -G "/dev/video*" >/dev/null 2>&1; then
+    export HW_ACCEL="drm"
+  else
+    unset HW_ACCEL
+    printf '[ha-init] hw_hevc_decode enabled but no /dev/dri or /dev/video* device found; falling back to CPU decode\n'
+  fi
+else
+  unset HW_ACCEL
+fi
+
+printf '[ha-init] Starting PiStream v%s (MEDIA_DIR=%s, TRANSCODE_TEMP_DIR=%s, SEGMENT_DURATION=%ss, MAX_KEEP_SEGMENTS=%s, HW_ACCEL=%s)\n' \
+  "${APP_VERSION:-dev}" "${MEDIA_DIR}" "${TRANSCODE_TEMP_DIR}" "${SEGMENT_DURATION}" "${MAX_KEEP_SEGMENTS}" "${HW_ACCEL:-none}"
 
 exec /app/pistream

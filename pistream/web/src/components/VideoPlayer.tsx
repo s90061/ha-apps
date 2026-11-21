@@ -3,7 +3,7 @@ import Hls from 'hls.js';
 import { ArrowLeft, Maximize2, Minimize2, Pause, Play, RotateCcw, RotateCw } from './Icons';
 import { CinemaSelect } from './CinemaSelect';
 import { AudioTrack, StreamInfo, SubtitleTrack } from '../types';
-import { api, detectHEVCSupport, resolveUrl } from '../services/api';
+import { api, detectHEVCDirectSupport, detectHEVCHlsSupport, resolveUrl } from '../services/api';
 import { formatDuration } from './VideoCard';
 
 interface VideoPlayerProps {
@@ -167,13 +167,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
   // 1. 取得串流決策（初次進入或切換畫質/音軌時觸發）
   useEffect(() => {
     let isMounted = true;
-    const allowHEVC = detectHEVCSupport() && !forceH264;
+    const allowHEVCDirect = detectHEVCDirectSupport() && !forceH264;
+    const allowHEVCHls = detectHEVCHlsSupport() && !forceH264;
 
     setLoading(true);
     setError(null);
 
     api
-      .getStreamInfo(fileId, sessionRef.current, quality, selectedAudio, allowHEVC)
+      .getStreamInfo(fileId, sessionRef.current, quality, selectedAudio, allowHEVCDirect, allowHEVCHls)
       .then((info) => {
         if (!isMounted) return;
         setStreamInfo(info);
@@ -402,7 +403,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
             }
             break;
           case Hls.ErrorTypes.MEDIA_ERROR:
-            if (
+            if (fatalMediaRetries < 2) {
+              fatalMediaRetries += 1;
+              hls.recoverMediaError();
+            } else if (
               !forceH264 &&
               decision.mode === 'remux' &&
               (media.video_codec.toLowerCase() === 'hevc' || media.video_codec.toLowerCase() === 'h265')
@@ -414,10 +418,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
               setForceH264(true);
               setQuality('1080p');
               return;
-            }
-            if (fatalMediaRetries < 2) {
-              fatalMediaRetries += 1;
-              hls.recoverMediaError();
             } else {
               hls.destroy();
               setSeeking(false);

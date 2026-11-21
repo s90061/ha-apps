@@ -319,9 +319,13 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 			quality = "original"
 		}
 		audioTrack, _ := strconv.Atoi(r.URL.Query().Get("audio"))
-		allowHEVC := r.URL.Query().Get("hevc") == "1" || r.URL.Query().Get("hevc") == "true"
+		allowHEVCDirect := r.URL.Query().Get("hevc") == "1" || r.URL.Query().Get("hevc") == "true"
+		allowHEVCHLS := allowHEVCDirect
+		if rawHLS := r.URL.Query().Get("hevc_hls"); rawHLS != "" {
+			allowHEVCHLS = rawHLS == "1" || rawHLS == "true"
+		}
 
-		decision := stream.DecideStreamMode(media, sessionID, quality, audioTrack, allowHEVC)
+		decision := stream.DecideStreamModeWithCaps(media, sessionID, quality, audioTrack, allowHEVCDirect, allowHEVCHLS)
 		if decision.Mode == "direct" {
 			// 若由 HLS 轉碼/換殼切回原生直連 (direct)，立刻終止背景 FFmpeg 行程釋放 CPU
 			hlsMgr.StopSession(sessionID, false)
@@ -504,12 +508,19 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 	}))
 
 	// 8. 託管 React 前端靜態產物 (SPA)
+	serveIndexNoCache := func(w http.ResponseWriter, r *http.Request, indexFile string) {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+		http.ServeFile(w, r, indexFile)
+	}
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		indexFile := filepath.Join(cfg.WebDir, "index.html")
 		if _, err := os.Stat(indexFile); err == nil {
 			reqPath := filepath.Clean(r.URL.Path)
 			if reqPath == "/" || reqPath == "." || reqPath == "\\" {
-				http.ServeFile(w, r, indexFile)
+				serveIndexNoCache(w, r, indexFile)
 				return
 			}
 			fullPath := filepath.Join(cfg.WebDir, reqPath)
@@ -517,7 +528,7 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 				http.ServeFile(w, r, fullPath)
 				return
 			}
-			http.ServeFile(w, r, indexFile)
+			serveIndexNoCache(w, r, indexFile)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")

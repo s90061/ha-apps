@@ -45,6 +45,12 @@ func effectiveBitRate(media *db.MediaFile) int64 {
 
 // DecideStreamMode 根據影片容器、視訊/音訊編碼、前端硬解支援度與使用者選擇的畫質，決定最佳串流模式
 func DecideStreamMode(media *db.MediaFile, sessionID string, quality string, audioTrack int, allowHEVC bool) DecisionResult {
+	return DecideStreamModeWithCaps(media, sessionID, quality, audioTrack, allowHEVC, allowHEVC)
+}
+
+// DecideStreamModeWithCaps 區分瀏覽器原生直連 (Direct Play) 與 HLS MSE (Remux) 的 HEVC 硬解支援度，
+// 避免像 Windows Firefox 等支援 MP4 HEVC 直連但不支援 MSE HEVC 的瀏覽器誤退回樹莓派 CPU 轉碼
+func DecideStreamModeWithCaps(media *db.MediaFile, sessionID string, quality string, audioTrack int, allowHEVCDirect bool, allowHEVCHLS bool) DecisionResult {
 	if quality == "" {
 		quality = "original"
 	}
@@ -57,9 +63,9 @@ func DecideStreamMode(media *db.MediaFile, sessionID string, quality string, aud
 	container := strings.ToLower(media.Container)
 
 	isH264 := vCodec == "h264" || vCodec == "avc1"
-	isHEVCSupported := (vCodec == "hevc" || vCodec == "h265") && allowHEVC
-	videoSupportedDirect := isH264 || vCodec == "vp9" || vCodec == "av1" || isHEVCSupported
-	videoSupportedRemux := isH264 || isHEVCSupported
+	isHEVC := vCodec == "hevc" || vCodec == "h265"
+	videoSupportedDirect := isH264 || vCodec == "vp9" || vCodec == "av1" || (isHEVC && allowHEVCDirect)
+	videoSupportedRemux := isH264 || (isHEVC && allowHEVCHLS)
 
 	// 若使用者主動選擇「原畫極速 (original)」
 	if quality == "original" {

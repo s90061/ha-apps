@@ -9,7 +9,30 @@ export function resolveUrl(path: string): string {
   return base + clean;
 }
 
-export function detectHEVCSupport(): boolean {
+// detectHEVCDirectSupport 偵測瀏覽器 <video> 原生直連 (Direct Play) 是否支援 HEVC 硬解（含 Windows Firefox）
+export function detectHEVCDirectSupport(): boolean {
+  try {
+    const v = document.createElement('video');
+    const canPlay =
+      v.canPlayType('video/mp4; codecs="hev1.1.6.L93.B0"') ||
+      v.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"');
+    if (canPlay === 'probably' || canPlay === 'maybe') {
+      return true;
+    }
+    if (typeof window !== 'undefined' && 'MediaSource' in window && typeof MediaSource.isTypeSupported === 'function') {
+      return (
+        MediaSource.isTypeSupported('video/mp4; codecs="hev1.1.6.L93.B0"') ||
+        MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L93.B0"')
+      );
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
+// detectHEVCHlsSupport 偵測瀏覽器 HLS (MSE / Safari 原生 HLS) 是否支援 HEVC 免重編碼換殼 (Remux)
+export function detectHEVCHlsSupport(): boolean {
   try {
     if (typeof navigator !== 'undefined' && /\(Windows.+Firefox\//i.test(navigator.userAgent)) {
       return false;
@@ -36,6 +59,8 @@ export function detectHEVCSupport(): boolean {
   }
   return false;
 }
+
+export const detectHEVCSupport = detectHEVCDirectSupport;
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(resolveUrl(url), {
@@ -121,10 +146,11 @@ export const api = {
     session: string,
     quality: string,
     audioTrack: number,
-    allowHEVC: boolean,
+    allowHEVCDirect: boolean,
+    allowHEVCHls: boolean = allowHEVCDirect,
   ) =>
     request<StreamInfo>(
-      `/api/stream/${fileId}/info?session=${encodeURIComponent(session)}&quality=${encodeURIComponent(quality)}&audio=${audioTrack}&hevc=${allowHEVC ? '1' : '0'}`,
+      `/api/stream/${fileId}/info?session=${encodeURIComponent(session)}&quality=${encodeURIComponent(quality)}&audio=${audioTrack}&hevc=${allowHEVCDirect ? '1' : '0'}&hevc_hls=${allowHEVCHls ? '1' : '0'}`,
     ),
 
   reportProgress: (fileId: number, positionSeconds: number) =>

@@ -30,6 +30,7 @@ type HLSSession struct {
 	Cmd            *exec.Cmd
 	ProcessDone    chan struct{}
 	IsPaused       bool
+	DisableHwAccel bool
 	mu             sync.Mutex
 }
 
@@ -256,6 +257,14 @@ func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, sessionID string
 				return targetSegPath, nil
 			}
 			if isProcessExited(procDone) {
+				if sess.Mode == "transcode" && !sess.DisableHwAccel && m.cfg.HwAccel != "" {
+					fmt.Printf("[HLSManager] Session=%s 硬體加速 (%s) 啟動失敗，自動回退至 CPU 軟解轉碼\n", sess.SessionID, m.cfg.HwAccel)
+					sess.DisableHwAccel = true
+					m.restartFFmpegLocked(sess, segIndex)
+					procDone = sess.ProcessDone
+					sess.mu.Unlock()
+					continue
+				}
 				sess.mu.Unlock()
 				return "", fmt.Errorf("FFmpeg 已結束但未能產生切片 seg_%05d.ts", segIndex)
 			}
@@ -282,6 +291,11 @@ func (m *HLSManager) restartFFmpegLocked(sess *HLSSession, startSeg int) {
 	sess.ProcessDone = make(chan struct{})
 	sess.IsPaused = false
 
+	hwAccel := m.cfg.HwAccel
+	if sess.DisableHwAccel {
+		hwAccel = ""
+	}
+
 	startTime := float64(startSeg * m.cfg.SegmentDuration)
 	args := BuildFFmpegArgs(TranscodeParams{
 		InputFile:      sess.Media.FilePath,
@@ -295,7 +309,7 @@ func (m *HLSManager) restartFFmpegLocked(sess *HLSSession, startSeg int) {
 		SourceWidth:    sess.Media.Width,
 		SourceHeight:   sess.Media.Height,
 		SourceCodec:    sess.Media.VideoCodec,
-		HwAccel:        m.cfg.HwAccel,
+		HwAccel:        hwAccel,
 		VaapiDevice:    m.cfg.VaapiDevice,
 	})
 
