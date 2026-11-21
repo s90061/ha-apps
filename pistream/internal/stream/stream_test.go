@@ -289,8 +289,8 @@ func TestBuildFFmpegArgsPi5LowCPU1080p(t *testing.T) {
 		HwAccel:      "drm",
 	})
 	joined4K := strings.Join(args4K, " ")
-	if !strings.Contains(joined4K, "-hwaccel drm") {
-		t.Fatalf("預期 4K HEVC 開啟 drm 時包含 -hwaccel drm，實際參數: %s", joined4K)
+	if !strings.Contains(joined4K, "-hwaccel drm -threads 2") {
+		t.Fatalf("預期 4K HEVC 開啟 drm 時包含 -hwaccel drm -threads 2，實際參數: %s", joined4K)
 	}
 	if !strings.Contains(joined4K, "-loglevel info -nostats") {
 		t.Fatalf("預期啟用 drm 硬解時使用 -loglevel info -nostats 以記錄硬解診斷行，實際參數: %s", joined4K)

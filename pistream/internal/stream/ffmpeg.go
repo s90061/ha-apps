@@ -51,7 +51,8 @@ func BuildFFmpegArgs(p TranscodeParams) []string {
 		)
 	} else if useDRM {
 		// Raspberry Pi 5 內建 4Kp60 HEVC 硬體解碼器 (V4L2 stateless / DRM)
-		args = append(args, "-hwaccel", "drm")
+		// 輸入解碼端限制為 2 條執行緒，避免預設 5 條解碼執行緒額外佔用 4K 參考幀緩衝區並與 libx264 搶核心
+		args = append(args, "-hwaccel", "drm", "-threads", "2")
 	}
 
 	// 1. 爆發＋巡航讀取節流 (Burst + Paced Readrate)：
