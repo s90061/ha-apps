@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.7
+
+- Fixed ghost / overlapping duplicate subtitles when adjusting subtitle time offset (`-0.5s` / `+0.5s` / reset) while the video is paused: snapshot `track.cues` with `Array.from()` to prevent live-list reordering from skipping cues, update `startTime`/`endTime` in direction-safe order, and refresh `track.mode` (`hidden` -> `showing` on next animation frame) to force browsers to clear stale cue overlays immediately.
+
 ## 0.1.6
 
 - Added immediate transcode termination (`POST /api/stream/stop`) triggered when closing the video player, navigating away, refreshing, closing the browser tab (`navigator.sendBeacon` + `keepalive` fetch), or switching back to Direct Play, dropping Raspberry Pi 5 CPU usage to 0% immediately instead of waiting 60–85 seconds for idle session cleanup.
