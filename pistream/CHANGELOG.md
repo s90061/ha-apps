@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.8
+
+- Completely eliminated permanently stuck / ghost subtitles after shifting subtitle offset (`-0.5s` / `+0.5s` / reset) by caching raw WebVTT in memory, shifting timestamps in-memory (supporting both `HH:MM:SS.mmm` and `MM:SS.mmm`), disabling and removing the old `<track>`, and mounting a fresh Blob `<track>` instead of mutating live `VTTCue` timestamps in place.
+
 ## 0.1.7
 
 - Fixed ghost / overlapping duplicate subtitles when adjusting subtitle time offset (`-0.5s` / `+0.5s` / reset) while the video is paused: snapshot `track.cues` with `Array.from()` to prevent live-list reordering from skipping cues, update `startTime`/`endTime` in direction-safe order, and refresh `track.mode` (`hidden` -> `showing` on next animation frame) to force browsers to clear stale cue overlays immediately.

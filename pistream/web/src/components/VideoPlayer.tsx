@@ -11,6 +11,53 @@ interface VideoPlayerProps {
   onClose: () => void;
 }
 
+const VTT_CUE_TIMING_RE =
+  /^((?:\d{1,2}:)?\d{2}:\d{2}[.,]\d{1,3})\s*-->\s*((?:\d{1,2}:)?\d{2}:\d{2}[.,]\d{1,3})(.*)$/gm;
+
+function parseVttTimestamp(ts: string): number {
+  const parts = ts.trim().replace(',', '.').split(':');
+  if (parts.length === 3) {
+    return Number(parts[0]) * 3600 + Number(parts[1]) * 60 + Number(parts[2]);
+  }
+  if (parts.length === 2) {
+    return Number(parts[0]) * 60 + Number(parts[1]);
+  }
+  return Number(ts) || 0;
+}
+
+function formatVttTimestamp(totalSec: number): string {
+  const clamped = Math.max(0, totalSec);
+  const totalMs = Math.round(clamped * 1000);
+  const ms = totalMs % 1000;
+  const totalWholeSec = Math.floor(totalMs / 1000);
+  const sec = totalWholeSec % 60;
+  const totalMin = Math.floor(totalWholeSec / 60);
+  const min = totalMin % 60;
+  const hr = Math.floor(totalMin / 60);
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  const pad3 = (n: number) => String(n).padStart(3, '0');
+  return `${pad2(hr)}:${pad2(min)}:${pad2(sec)}.${pad3(ms)}`;
+}
+
+// 在記憶體中直接平移 WebVTT 時間戳（支援 HH:MM:SS.mmm 與 MM:SS.mmm 兩種格式），
+// 避免就地修改瀏覽器活體 VTTCue.startTime/endTime 觸發 Chromium CueTimeline 活躍字幕永久卡死 Bug
+function shiftWebVTT(rawVtt: string, offsetSec: number): string {
+  if (Math.abs(offsetSec) < 0.001) {
+    return rawVtt;
+  }
+  return rawVtt.replace(VTT_CUE_TIMING_RE, (_match, rawStart: string, rawEnd: string, rest: string) => {
+    const startSec = parseVttTimestamp(rawStart);
+    const endSec = parseVttTimestamp(rawEnd);
+    const shiftedEndRaw = endSec + offsetSec;
+    if (shiftedEndRaw <= 0) {
+      return `00:00:00.000 --> 00:00:00.000${rest}`;
+    }
+    const nextStart = Math.max(0, startSec + offsetSec);
+    const nextEnd = Math.max(nextStart + 0.05, shiftedEndRaw);
+    return `${formatVttTimestamp(nextStart)} --> ${formatVttTimestamp(nextEnd)}${rest}`;
+  });
+}
+
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -34,8 +81,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
   const [selectedSub, setSelectedSub] = useState<string>('off');
   const [subtitleOffset, setSubtitleOffset] = useState<number>(0);
   const subtitleOffsetRef = useRef<number>(0);
-  const cueOrigTimesRef = useRef<WeakMap<TextTrackCue, { start: number; end: number }>>(new WeakMap());
-  const subtitleRefreshRafRef = useRef<number | null>(null);
+  const rawVttRef = useRef<string | null>(null);
+  const subBlobUrlRef = useRef<string | null>(null);
+  const subFetchAbortRef = useRef<AbortController | null>(null);
   const seekSeqRef = useRef<number>(0);
   const [subtitleScale, setSubtitleScale] = useState<number>(() => {
     const saved = Number(localStorage.getItem('pistream_subtitle_scale'));
@@ -47,62 +95,54 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     localStorage.setItem('pistream_subtitle_scale', String(scale));
   };
 
-  const applySubtitleOffsetToTrack = (offsetSec: number) => {
+  const clearSubtitleTracks = (video: HTMLVideoElement | null) => {
+    if (video) {
+      // 先將現存 TextTrack 設為 disabled，強制瀏覽器立刻從 CueTimeline 與 Shadow DOM 卸載，徹底杜絕字幕殘留
+      if (video.textTracks) {
+        for (let i = 0; i < video.textTracks.length; i++) {
+          video.textTracks[i].mode = 'disabled';
+        }
+      }
+      while (video.querySelector('track')) {
+        const t = video.querySelector('track');
+        if (t) video.removeChild(t);
+      }
+    }
+    if (subBlobUrlRef.current) {
+      URL.revokeObjectURL(subBlobUrlRef.current);
+      subBlobUrlRef.current = null;
+    }
+  };
+
+  const mountSubtitleFromRawVtt = (rawVtt: string, offsetSec: number) => {
     const video = videoRef.current;
-    if (!video || !video.textTracks || !video.textTracks[0]) return;
-    const track = video.textTracks[0];
-    const cues = track.cues;
-    if (!cues || cues.length === 0) return;
+    if (!video) return;
 
-    // 1. 先將動態排序的 TextTrackCueList 轉成靜態快照，避免修改 startTime 時陣列即時重排而跳過部分字幕
-    const cueList = Array.from(cues);
+    clearSubtitleTracks(video);
 
-    // 2. 在位移或重置時暫切為 hidden 清空瀏覽器 Shadow DOM 字幕盒，防止暫停畫面下舊字幕殘留造成雙字幕重疊
-    const wasShowing = track.mode === 'showing' || subtitleRefreshRafRef.current !== null;
-    const needsRedraw = wasShowing && (offsetSec !== 0 || cueList.some((c) => cueOrigTimesRef.current.has(c)));
-    if (subtitleRefreshRafRef.current !== null) {
-      window.cancelAnimationFrame(subtitleRefreshRafRef.current);
-      subtitleRefreshRafRef.current = null;
-    }
-    if (needsRedraw) {
-      track.mode = 'hidden';
-    }
+    const shiftedVtt = shiftWebVTT(rawVtt, offsetSec);
+    const blob = new Blob([shiftedVtt], { type: 'text/vtt;charset=utf-8' });
+    const blobUrl = URL.createObjectURL(blob);
+    subBlobUrlRef.current = blobUrl;
 
-    for (const cue of cueList) {
-      let orig = cueOrigTimesRef.current.get(cue);
-      if (!orig) {
-        orig = { start: cue.startTime, end: cue.endTime };
-        cueOrigTimesRef.current.set(cue, orig);
-      }
-      const nextStart = Math.max(0, Number((orig.start + offsetSec).toFixed(3)));
-      const nextEnd = Math.max(nextStart + 0.1, Number((orig.end + offsetSec).toFixed(3)));
-
-      // 3. 依位移方向決定賦值順序，避免往後延遲時瞬間出現 startTime > endTime 的無效反轉狀態
-      if (nextStart > cue.endTime) {
-        if (Math.abs(cue.endTime - nextEnd) > 0.001) {
-          cue.endTime = nextEnd;
+    const track = document.createElement('track');
+    track.kind = 'subtitles';
+    track.src = blobUrl;
+    track.srclang = 'zh';
+    track.label = '字幕';
+    track.default = true;
+    track.addEventListener(
+      'load',
+      () => {
+        if (track.track) {
+          track.track.mode = 'showing';
         }
-        if (Math.abs(cue.startTime - nextStart) > 0.001) {
-          cue.startTime = nextStart;
-        }
-      } else {
-        if (Math.abs(cue.startTime - nextStart) > 0.001) {
-          cue.startTime = nextStart;
-        }
-        if (Math.abs(cue.endTime - nextEnd) > 0.001) {
-          cue.endTime = nextEnd;
-        }
-      }
-    }
-
-    // 4. 在下一個繪製幀切回 showing，強制瀏覽器於暫停狀態下重新計算 activeCues 並繪製正確的單一字幕
-    if (needsRedraw) {
-      subtitleRefreshRafRef.current = window.requestAnimationFrame(() => {
-        subtitleRefreshRafRef.current = null;
-        if (videoRef.current?.textTracks?.[0] === track) {
-          track.mode = 'showing';
-        }
-      });
+      },
+      { once: true },
+    );
+    video.appendChild(track);
+    if (track.track) {
+      track.track.mode = 'showing';
     }
   };
 
@@ -110,7 +150,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     const next = reset ? 0 : Math.max(-60, Math.min(60, Number((subtitleOffset + deltaSec).toFixed(1))));
     subtitleOffsetRef.current = next;
     setSubtitleOffset(next);
-    applySubtitleOffsetToTrack(next);
+    if (rawVttRef.current !== null) {
+      mountSubtitleFromRawVtt(rawVttRef.current, next);
+    }
   };
 
   const [currentTime, setCurrentTime] = useState(0);
@@ -443,55 +485,48 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     window.addEventListener('pagehide', handleUnload);
     window.addEventListener('beforeunload', handleUnload);
     return () => {
-      if (subtitleRefreshRafRef.current !== null) {
-        window.cancelAnimationFrame(subtitleRefreshRafRef.current);
-        subtitleRefreshRafRef.current = null;
+      if (subFetchAbortRef.current) {
+        subFetchAbortRef.current.abort();
+        subFetchAbortRef.current = null;
       }
+      rawVttRef.current = null;
+      clearSubtitleTracks(videoRef.current);
       window.removeEventListener('pagehide', handleUnload);
       window.removeEventListener('beforeunload', handleUnload);
       api.stopStream(activeSession);
     };
   }, [fileId]);
 
-  // 4. 切換外掛或內嵌字幕
+  // 4. 切換外掛或內嵌字幕（抓回原始 WebVTT 文字快取於記憶體，透過重建 Blob <track> 實現零殘留即時偏移）
   const handleSubtitleChange = (subId: string) => {
     setSelectedSub(subId);
-    const video = videoRef.current;
-    if (!video) return;
-
-    if (subtitleRefreshRafRef.current !== null) {
-      window.cancelAnimationFrame(subtitleRefreshRafRef.current);
-      subtitleRefreshRafRef.current = null;
+    if (subFetchAbortRef.current) {
+      subFetchAbortRef.current.abort();
+      subFetchAbortRef.current = null;
     }
+    rawVttRef.current = null;
+    clearSubtitleTracks(videoRef.current);
 
-    while (video.querySelector('track')) {
-      const t = video.querySelector('track');
-      if (t) video.removeChild(t);
-    }
-    cueOrigTimesRef.current = new WeakMap();
+    if (subId === 'off') return;
 
-    if (subId !== 'off') {
-      const track = document.createElement('track');
-      track.kind = 'subtitles';
-      track.src = resolveUrl(`/api/stream/${fileId}/subtitles/${encodeURIComponent(subId)}`);
-      track.srclang = 'zh';
-      track.label = '字幕';
-      track.default = true;
-      track.addEventListener('load', () => {
-        if (video.textTracks && video.textTracks[0]) {
-          video.textTracks[0].mode = 'showing';
-        }
-        applySubtitleOffsetToTrack(subtitleOffsetRef.current);
+    const controller = new AbortController();
+    subFetchAbortRef.current = controller;
+    const url = resolveUrl(`/api/stream/${fileId}/subtitles/${encodeURIComponent(subId)}`);
+
+    fetch(url, { credentials: 'include', signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`subtitle fetch failed (${res.status})`);
+        return res.text();
+      })
+      .then((text) => {
+        if (controller.signal.aborted) return;
+        const normalized = text.replace(/\r\n/g, '\n');
+        rawVttRef.current = normalized;
+        mountSubtitleFromRawVtt(normalized, subtitleOffsetRef.current);
+      })
+      .catch(() => {
+        // ignore abort or fetch error
       });
-      video.appendChild(track);
-
-      setTimeout(() => {
-        if (video.textTracks && video.textTracks[0]) {
-          video.textTracks[0].mode = 'showing';
-        }
-        applySubtitleOffsetToTrack(subtitleOffsetRef.current);
-      }, 80);
-    }
   };
 
   // 5. 切換畫質或音軌時保留當前播放秒數
