@@ -1,9 +1,14 @@
 package stream
 
 import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"pistream/internal/config"
 	"pistream/internal/db"
 )
 
@@ -234,5 +239,47 @@ func TestBuildFFmpegArgsPi5LowCPU1080p(t *testing.T) {
 	joined4K := strings.Join(args4K, " ")
 	if !strings.Contains(joined4K, "scale='min(1920,iw)':-2:flags=fast_bilinear") {
 		t.Fatalf("預期 4K 轉 1080p 啟用 fast_bilinear 縮放，實際參數: %s", joined4K)
+	}
+}
+
+func TestHLSManagerStopSessionAndTombstone(t *testing.T) {
+	tempDir := t.TempDir()
+	mgr := NewHLSManager(&config.Config{
+		TranscodeTempDir: tempDir,
+		SegmentDuration:  4,
+		MaxKeepSegments:  10,
+	})
+
+	media := &db.MediaFile{
+		ID:       42,
+		FilePath: filepath.Join(tempDir, "nonexistent.mkv"),
+	}
+
+	sess := mgr.getOrCreateSession("sess_close_test", media, "transcode", "1080p", 0)
+	if _, err := os.Stat(sess.OutputDir); err != nil {
+		t.Fatalf("預期已建立暫存目錄 %s: %v", sess.OutputDir, err)
+	}
+
+	// 主動停止 Session（帶 tombstone=true）：應立即刪除暫存目錄並標記為已停止
+	if stopped := mgr.StopSession("sess_close_test", true); !stopped {
+		t.Fatalf("預期 StopSession 回傳 true")
+	}
+	if _, err := os.Stat(sess.OutputDir); !os.IsNotExist(err) {
+		t.Fatalf("預期暫存目錄已被刪除，但仍存在: %v", err)
+	}
+
+	// 關閉瞬間遲到的切片請求應立即回傳 context.Canceled，不得重新啟動 FFmpeg
+	_, err := mgr.EnsureSegmentReady(context.Background(), "sess_close_test", media, "transcode", "1080p", 0, 1, "")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("預期已停止的 Session 拒絕遲到切片請求並回傳 context.Canceled，實際: %v", err)
+	}
+
+	// 非 tombstone 停止（例如切回 direct 模式）：應清除 Session 但允許同一個 sessionID 之後再切回 HLS
+	mgr.getOrCreateSession("sess_direct_switch", media, "transcode", "1080p", 0)
+	if stopped := mgr.StopSession("sess_direct_switch", false); !stopped {
+		t.Fatalf("預期非 tombstone StopSession 回傳 true")
+	}
+	if mgr.isSessionStopped("sess_direct_switch") {
+		t.Fatalf("非 tombstone 停止不應將 sessionID 列入 tombstone")
 	}
 }

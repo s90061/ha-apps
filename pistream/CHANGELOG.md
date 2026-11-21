@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.6
+
+- Added immediate transcode termination (`POST /api/stream/stop`) triggered when closing the video player, navigating away, refreshing, closing the browser tab (`navigator.sendBeacon` + `keepalive` fetch), or switching back to Direct Play, dropping Raspberry Pi 5 CPU usage to 0% immediately instead of waiting 60–85 seconds for idle session cleanup.
+- Added a short-lived session stop tombstone in `HLSManager` so delayed in-flight `.ts` segment requests arriving milliseconds after closing a video cannot resurrect FFmpeg.
+- Tightened idle session reaper interval (`10s` check / `45s` timeout) and sliding-window ahead-buffer high/low watermarks (`6` / `3` segments) to minimize background CPU work.
+
 ## 0.1.5
 
 - Added zero-reencode HEVC (`-c:v copy`) MKV remux support for HEVC-capable browsers and smart 1080p bypass (`direct`/`remux`) for videos already at `<= 1080p` and `<= 8 Mbps`, dropping Raspberry Pi 5 CPU usage from >90% to ~1–2% when re-encoding is unnecessary.
