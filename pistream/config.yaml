@@ -1,6 +1,6 @@
 ---
 name: "PiStream"
-version: "0.1.10"
+version: "0.1.11"
 slug: "pistream"
 description: "Lightweight Raspberry Pi 5 media server with Direct Play, zero-copy Remux, and sliding-window HLS transcoding."
 url: "https://github.com/s90061/ha-apps/tree/main/pistream"
@@ -8,6 +8,13 @@ arch:
   - aarch64
 init: false
 video: true
+udev: true
+devices:
+  - /dev/dma_heap/vidbuf_cached
+  - /dev/dma_heap/linux,cma
+  - /dev/dma_heap/reserved
+  - /dev/dma_heap/system
+  - /dev/udmabuf
 ingress: true
 ingress_port: 8080
 panel_icon: "mdi:movie-play"

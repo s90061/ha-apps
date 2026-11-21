@@ -25,13 +25,19 @@ type TranscodeParams struct {
 
 // BuildFFmpegArgs 針對樹莓派 5 (ARM64) 與任意時段秒開跳轉建構 FFmpeg 參數
 func BuildFFmpegArgs(p TranscodeParams) []string {
+	useVAAPI := p.Mode != "remux" && strings.EqualFold(p.HwAccel, "vaapi")
+	useDRM := p.Mode != "remux" && strings.EqualFold(p.HwAccel, "drm") &&
+		(p.SourceCodec == "" || strings.EqualFold(p.SourceCodec, "hevc") || strings.EqualFold(p.SourceCodec, "h265"))
+
 	args := []string{
 		"-hide_banner",
-		"-loglevel", "warning",
 	}
-
-	useVAAPI := p.Mode != "remux" && strings.EqualFold(p.HwAccel, "vaapi")
-	useDRM := p.Mode != "remux" && strings.EqualFold(p.HwAccel, "drm")
+	if useDRM {
+		// 啟用 info + nostats 讓 rpi-ffmpeg 印出 Hwaccel V4L2 HEVC stateless 確認行，同時避免進度條洗版
+		args = append(args, "-loglevel", "info", "-nostats")
+	} else {
+		args = append(args, "-loglevel", "warning")
+	}
 
 	if useVAAPI {
 		dev := p.VaapiDevice
@@ -45,9 +51,7 @@ func BuildFFmpegArgs(p TranscodeParams) []string {
 		)
 	} else if useDRM {
 		// Raspberry Pi 5 內建 4Kp60 HEVC 硬體解碼器 (V4L2 stateless / DRM)
-		if p.SourceCodec == "" || strings.EqualFold(p.SourceCodec, "hevc") || strings.EqualFold(p.SourceCodec, "h265") {
-			args = append(args, "-hwaccel", "drm")
-		}
+		args = append(args, "-hwaccel", "drm")
 	}
 
 	// 1. 爆發＋巡航讀取節流 (Burst + Paced Readrate)：
