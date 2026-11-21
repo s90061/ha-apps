@@ -44,11 +44,12 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
-        gnupg \
         jq \
         tzdata && \
-    curl -fsSL https://archive.raspberrypi.com/debian/raspberrypi.gpg.key \
-        | gpg --dearmor -o /usr/share/keyrings/raspberrypi-archive-keyring.gpg && \
+    curl -fsSL "https://archive.raspberrypi.com/debian/pool/main/r/raspberrypi-archive-keyring/raspberrypi-archive-keyring_2025.1+rpt1_all.deb" \
+        -o /tmp/raspberrypi-archive-keyring.deb && \
+    dpkg -i /tmp/raspberrypi-archive-keyring.deb && \
+    rm -f /tmp/raspberrypi-archive-keyring.deb && \
     printf 'deb [signed-by=/usr/share/keyrings/raspberrypi-archive-keyring.gpg] https://archive.raspberrypi.com/debian/ trixie main\n' \
         > /etc/apt/sources.list.d/raspi.list && \
     printf 'Package: *\nPin: origin archive.raspberrypi.com\nPin-Priority: 700\n' \
@@ -57,7 +58,6 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends ffmpeg && \
     ffmpeg -version && \
     ffmpeg -hwaccels && \
-    apt-get purge -y --auto-remove gnupg && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
