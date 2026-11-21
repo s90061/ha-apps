@@ -50,6 +50,61 @@ func TestDecideStreamMode(t *testing.T) {
 	if res4.Mode != "transcode" || res4.Quality != "720p" {
 		t.Fatalf("預期為 transcode 720p，實際為 %+v", res4)
 	}
+
+	// 5. 1080p MKV HEVC 在支援 HEVC 的瀏覽器 -> 原畫與 1080p 模式皆走免重編碼 Remux (-c:v copy)
+	mkvHEVC1080p := &db.MediaFile{
+		ID:         5,
+		Container:  "mkv",
+		VideoCodec: "hevc",
+		AudioCodec: "eac3",
+		Width:      1920,
+		Height:     1080,
+		BitRate:    4_500_000,
+	}
+	res5Orig := DecideStreamMode(mkvHEVC1080p, "sess1", "original", 0, true)
+	if res5Orig.Mode != "remux" {
+		t.Fatalf("預期支援 HEVC 的 1080p MKV 原畫為 remux，實際為 %s", res5Orig.Mode)
+	}
+	res5_1080p := DecideStreamMode(mkvHEVC1080p, "sess1", "1080p", 0, true)
+	if res5_1080p.Mode != "remux" {
+		t.Fatalf("預期低碼率 1080p MKV HEVC 切換 1080p 時自動旁路為 remux，實際為 %s", res5_1080p.Mode)
+	}
+
+	// 6. 1080p MKV HEVC 在不支援 HEVC 的瀏覽器 (或強制 H.264 兼容模式) -> Transcode
+	res6 := DecideStreamMode(mkvHEVC1080p, "sess1", "1080p", 0, false)
+	if res6.Mode != "transcode" {
+		t.Fatalf("預期不支援 HEVC 時 1080p MKV HEVC 為 transcode，實際為 %s", res6.Mode)
+	}
+
+	// 7. 1080p MKV H.264 (碼率 <= 8 Mbps) 切換 1080p -> 智慧旁路為 Remux (-c:v copy)
+	mkvH264_1080p := &db.MediaFile{
+		ID:         7,
+		Container:  "mkv",
+		VideoCodec: "h264",
+		AudioCodec: "ac3",
+		Width:      1920,
+		Height:     1080,
+		BitRate:    5_200_000,
+	}
+	res7 := DecideStreamMode(mkvH264_1080p, "sess1", "1080p", 0, false)
+	if res7.Mode != "remux" {
+		t.Fatalf("預期 1080p H.264 MKV (5.2 Mbps) 選 1080p 時旁路為 remux，實際為 %s", res7.Mode)
+	}
+
+	// 8. 高碼率藍光原盤 1080p MKV H.264 (25 Mbps) 切換 1080p 省流 -> 仍執行 Transcode 壓低碼率
+	mkvH264HighBitrate := &db.MediaFile{
+		ID:         8,
+		Container:  "mkv",
+		VideoCodec: "h264",
+		AudioCodec: "dts",
+		Width:      1920,
+		Height:     1080,
+		BitRate:    25_000_000,
+	}
+	res8 := DecideStreamMode(mkvH264HighBitrate, "sess1", "1080p", 0, true)
+	if res8.Mode != "transcode" {
+		t.Fatalf("預期 25 Mbps 高碼率 1080p MKV 選 1080p 省流時為 transcode，實際為 %s", res8.Mode)
+	}
 }
 
 func TestBuildFFmpegArgsSeekAndOffset(t *testing.T) {
@@ -132,5 +187,52 @@ func TestBuildFFmpegArgsVAAPI(t *testing.T) {
 	})
 	if strings.Contains(strings.Join(remuxArgs, " "), "-hwaccel vaapi") {
 		t.Fatalf("remux 模式不應啟用 VAAPI 硬體編解碼")
+	}
+}
+
+func TestBuildFFmpegArgsPi5LowCPU1080p(t *testing.T) {
+	// 1. 1080p 原片 (SourceWidth=1920) 轉 1080p：應省略 -vf scale 濾鏡，並啟用 superfast + readrate 節流
+	args1080 := BuildFFmpegArgs(TranscodeParams{
+		InputFile:      "/media/ep01_1080p_hevc.mkv",
+		OutputDir:      "/dev/shm/out",
+		StartTimeSec:   30.0,
+		StartSegNumber: 7,
+		SegmentDur:     4,
+		Mode:           "transcode",
+		Quality:        "1080p",
+		SourceWidth:    1920,
+		SourceHeight:   1080,
+		SourceCodec:    "hevc",
+	})
+	joined1080 := strings.Join(args1080, " ")
+
+	for _, want := range []string{
+		"-readrate 1.2",
+		"-readrate_initial_burst 12",
+		"-preset superfast",
+		"-x264-params bframes=2:ref=1:rc-lookahead=0:weightp=0",
+		"-fpsmax 30",
+	} {
+		if !strings.Contains(joined1080, want) {
+			t.Fatalf("預期 Pi 5 低 CPU 1080p 參數包含 %q，實際參數: %s", want, joined1080)
+		}
+	}
+	if strings.Contains(joined1080, "-vf scale") {
+		t.Fatalf("原片寬度已為 1920 時，轉 1080p 不應掛載冗餘的 -vf scale 濾鏡，實際參數: %s", joined1080)
+	}
+
+	// 2. 4K 原片 (SourceWidth=3840) 轉 1080p：應啟用 fast_bilinear 快速縮放濾鏡
+	args4K := BuildFFmpegArgs(TranscodeParams{
+		InputFile:    "/media/movie_4k.mkv",
+		OutputDir:    "/dev/shm/out",
+		SegmentDur:   4,
+		Mode:         "transcode",
+		Quality:      "1080p",
+		SourceWidth:  3840,
+		SourceHeight: 2160,
+	})
+	joined4K := strings.Join(args4K, " ")
+	if !strings.Contains(joined4K, "scale='min(1920,iw)':-2:flags=fast_bilinear") {
+		t.Fatalf("預期 4K 轉 1080p 啟用 fast_bilinear 縮放，實際參數: %s", joined4K)
 	}
 }

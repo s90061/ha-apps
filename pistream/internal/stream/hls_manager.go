@@ -29,6 +29,7 @@ type HLSSession struct {
 	CancelFunc     context.CancelFunc
 	Cmd            *exec.Cmd
 	ProcessDone    chan struct{}
+	IsPaused       bool
 	mu             sync.Mutex
 }
 
@@ -44,6 +45,7 @@ func NewHLSManager(cfg *config.Config) *HLSManager {
 		cfg:      cfg,
 		sessions: make(map[string]*HLSSession),
 	}
+	go mgr.throttleLoop()
 	go mgr.cleanupLoop()
 	return mgr
 }
@@ -141,6 +143,14 @@ func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, sessionID string
 				sess.CurrentHeadSeg = segIndex
 				m.pruneOldSegmentsLocked(sess, segIndex)
 			}
+			// 若前瞻緩衝低於 5 個切片 (20秒)，提前喚醒已暫停的 FFmpeg 繼續補充切片
+			if sess.IsPaused {
+				lowWaterSeg := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+5))
+				lowWaterNext := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+6))
+				if !isSegmentComplete(lowWaterSeg, lowWaterNext, sess.ProcessDone) {
+					m.resumeFFmpegLocked(sess)
+				}
+			}
 			sess.mu.Unlock()
 			return targetSegPath, nil
 		}
@@ -151,6 +161,8 @@ func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, sessionID string
 
 		if needRestart {
 			m.restartFFmpegLocked(sess, segIndex)
+		} else if sess.IsPaused {
+			m.resumeFFmpegLocked(sess)
 		}
 	}
 
@@ -193,6 +205,7 @@ func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, sessionID string
 
 func (m *HLSManager) restartFFmpegLocked(sess *HLSSession, startSeg int) {
 	if sess.CancelFunc != nil {
+		m.resumeFFmpegLocked(sess)
 		sess.CancelFunc()
 		if sess.ProcessDone != nil {
 			<-sess.ProcessDone
@@ -206,6 +219,7 @@ func (m *HLSManager) restartFFmpegLocked(sess *HLSSession, startSeg int) {
 	sess.CancelFunc = cancel
 	sess.CurrentHeadSeg = startSeg
 	sess.ProcessDone = make(chan struct{})
+	sess.IsPaused = false
 
 	startTime := float64(startSeg * m.cfg.SegmentDuration)
 	args := BuildFFmpegArgs(TranscodeParams{
@@ -217,6 +231,9 @@ func (m *HLSManager) restartFFmpegLocked(sess *HLSSession, startSeg int) {
 		Mode:           sess.Mode,
 		Quality:        sess.Quality,
 		AudioTrack:     sess.AudioTrack,
+		SourceWidth:    sess.Media.Width,
+		SourceHeight:   sess.Media.Height,
+		SourceCodec:    sess.Media.VideoCodec,
 		HwAccel:        m.cfg.HwAccel,
 		VaapiDevice:    m.cfg.VaapiDevice,
 	})
@@ -312,6 +329,50 @@ func isProcessExited(done chan struct{}) bool {
 	}
 }
 
+func (m *HLSManager) pauseFFmpegLocked(sess *HLSSession) {
+	if sess.IsPaused || sess.Cmd == nil || isProcessExited(sess.ProcessDone) {
+		return
+	}
+	if err := suspendProcess(sess.Cmd); err == nil {
+		sess.IsPaused = true
+	}
+}
+
+func (m *HLSManager) resumeFFmpegLocked(sess *HLSSession) {
+	if !sess.IsPaused || sess.Cmd == nil || isProcessExited(sess.ProcessDone) {
+		sess.IsPaused = false
+		return
+	}
+	_ = resumeProcess(sess.Cmd)
+	sess.IsPaused = false
+}
+
+// throttleLoop 前瞻緩衝節流迴圈：當 FFmpeg 產生的切片超前播放頭達 8 個 (32秒) 時自動發送 SIGSTOP 暫停轉碼，
+// 讓樹莓派 CPU 瞬間降至 0% 並防止未播切片塞滿 /dev/shm 或 /tmp
+func (m *HLSManager) throttleLoop() {
+	ticker := time.NewTicker(1 * time.Second)
+	for range ticker.C {
+		m.mu.RLock()
+		sessions := make([]*HLSSession, 0, len(m.sessions))
+		for _, s := range m.sessions {
+			sessions = append(sessions, s)
+		}
+		m.mu.RUnlock()
+
+		for _, sess := range sessions {
+			sess.mu.Lock()
+			if !sess.IsPaused && sess.Cmd != nil && !isProcessExited(sess.ProcessDone) && sess.CurrentHeadSeg >= 0 {
+				highWaterSeg := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+8))
+				highWaterNext := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+9))
+				if isSegmentComplete(highWaterSeg, highWaterNext, sess.ProcessDone) {
+					m.pauseFFmpegLocked(sess)
+				}
+			}
+			sess.mu.Unlock()
+		}
+	}
+}
+
 func (m *HLSManager) cleanupLoop() {
 	ticker := time.NewTicker(25 * time.Second)
 	for range ticker.C {
@@ -322,6 +383,7 @@ func (m *HLSManager) cleanupLoop() {
 			if now.Sub(sess.LastActive) > 60*time.Second {
 				fmt.Printf("[HLSManager] 回收閒置 Session: %s\n", id)
 				if sess.CancelFunc != nil {
+					m.resumeFFmpegLocked(sess)
 					sess.CancelFunc()
 				}
 				_ = os.RemoveAll(sess.OutputDir)

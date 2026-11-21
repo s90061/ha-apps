@@ -11,18 +11,25 @@ export function resolveUrl(path: string): string {
 
 export function detectHEVCSupport(): boolean {
   try {
-    const v = document.createElement('video');
-    const canPlay =
-      v.canPlayType('video/mp4; codecs="hev1.1.6.L93.B0"') ||
-      v.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"');
-    if (canPlay === 'probably' || canPlay === 'maybe') {
-      return true;
+    if (typeof navigator !== 'undefined' && /\(Windows.+Firefox\//i.test(navigator.userAgent)) {
+      return false;
     }
-    if (typeof window !== 'undefined' && 'MediaSource' in window) {
-      return (
+    if (typeof window !== 'undefined' && 'MediaSource' in window && typeof MediaSource.isTypeSupported === 'function') {
+      if (
         MediaSource.isTypeSupported('video/mp4; codecs="hev1.1.6.L93.B0"') ||
         MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L93.B0"')
-      );
+      ) {
+        return true;
+      }
+    }
+    const v = document.createElement('video');
+    if (v.canPlayType('application/vnd.apple.mpegurl')) {
+      const canPlay =
+        v.canPlayType('video/mp4; codecs="hev1.1.6.L93.B0"') ||
+        v.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"');
+      if (canPlay === 'probably' || canPlay === 'maybe') {
+        return true;
+      }
     }
   } catch {
     // ignore
