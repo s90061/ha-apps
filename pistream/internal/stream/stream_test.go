@@ -139,6 +139,27 @@ func TestDecideStreamMode(t *testing.T) {
 	if res9Mkv.Mode != "transcode" {
 		t.Fatalf("預期不支援 MSE HEVC 時 4K HEVC MKV 為 transcode，實際為 %s", res9Mkv.Mode)
 	}
+
+	// 10. 4K HEVC + EAC3 MP4：
+	//     - 瀏覽器支援 HEVC MSE 但不支援 EAC3 (如 Firefox/Chrome) -> Remux (-c:v copy + 音訊轉 AAC)
+	//     - 瀏覽器同時支援 HEVC + EAC3 (如支援杜比的 Edge/Safari) -> Direct Play (0% CPU)
+	mp4HEVC4KEAC3 := &db.MediaFile{
+		ID:         11,
+		Container:  "mp4",
+		VideoCodec: "hevc",
+		AudioCodec: "eac3",
+		Width:      3840,
+		Height:     2160,
+		BitRate:    25_000_000,
+	}
+	res10Remux := DecideStreamModeWithAllCaps(mp4HEVC4KEAC3, "sess1", "original", 0, true, true, false)
+	if res10Remux.Mode != "remux" {
+		t.Fatalf("預期 4K HEVC + EAC3 MP4 在不支援 EAC3 的瀏覽器走 remux，實際為 %s", res10Remux.Mode)
+	}
+	res10Direct := DecideStreamModeWithAllCaps(mp4HEVC4KEAC3, "sess1", "original", 0, true, true, true)
+	if res10Direct.Mode != "direct" {
+		t.Fatalf("預期 4K HEVC + EAC3 MP4 在支援 EAC3 的瀏覽器走 direct，實際為 %s", res10Direct.Mode)
+	}
 }
 
 func TestBuildFFmpegArgsSeekAndOffset(t *testing.T) {
