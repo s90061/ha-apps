@@ -24,5 +24,8 @@ configuration:
   transcode_storage:
     name: HLS 轉碼暫存位置
     description: 預設 auto（若容器 /dev/shm >= 256MB 則用記憶體，若為 HA 預設 64MB 則自動改用 /tmp/pistream_hls 防止 4K 換殼塞滿記憶體），亦可強制指定 shm 或 tmp。
+  hw_hevc_decode:
+    name: 樹莓派 5 HEVC 硬體解碼
+    description: 轉碼 4K / 1080p HEVC (H.265) 影片時啟用樹莓派 5 內建的 V4L2-request / DRM 硬體解碼器（若裝置不支援將自動回退 CPU 軟解）。
 network:
   8080/tcp: Web UI 與 HTTP 206 零拷貝直連串流埠（Ingress 亦使用內部 8080）

@@ -24,5 +24,8 @@ configuration:
   transcode_storage:
     name: HLS Transcode Buffer Location
     description: Choose auto (uses /dev/shm when >=256MB, otherwise /tmp/pistream_hls to avoid 64MB shm OOM on 4K Remux), shm (/dev/shm/pistream_hls), or tmp (/tmp/pistream_hls).
+  hw_hevc_decode:
+    name: Raspberry Pi 5 HEVC Hardware Decode
+    description: Enable Raspberry Pi 5 V4L2-request / DRM hardware HEVC (H.265) decoding when transcoding 4K/1080p HEVC videos (automatically falls back to CPU decode if unavailable).
 network:
   8080/tcp: Direct Web UI & zero-copy HTTP 206 streaming port (Ingress also uses internal 8080)

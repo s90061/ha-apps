@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.9
+
+- Enabled native Raspberry Pi 5 4Kp60 HEVC (`rpi-hevc-dec` / V4L2-request DRM) hardware decoding for HEVC transcoding: switched runtime to Debian Trixie with Raspberry Pi official patched `ffmpeg` (`7.1.x+rpt`), added `video: true` and `hw_hevc_decode` option (default `true`), and added automatic runtime fallback to CPU software decoding if hardware decode fails on any stream.
+- Split client HEVC capability detection into Direct Play (`hevc`) vs HLS MSE (`hevc_hls`) so Windows Firefox and other browsers supporting MP4 HEVC Direct Play always stay in zero-CPU `Direct Play` for 4K HEVC `.mp4` files, and allowed `hls.recoverMediaError()` retries before falling back from HEVC Remux.
+- Added `Cache-Control: no-cache, no-store, must-revalidate` headers to SPA `index.html` responses so Home Assistant App updates load the newest frontend immediately without stale browser cache.
+
 ## 0.1.8
 
 - Completely eliminated permanently stuck / ghost subtitles after shifting subtitle offset (`-0.5s` / `+0.5s` / reset) by caching raw WebVTT in memory, shifting timestamps in-memory (supporting both `HH:MM:SS.mmm` and `MM:SS.mmm`), disabling and removing the old `<track>`, and mounting a fresh Blob `<track>` instead of mutating live `VTTCue` timestamps in place.
