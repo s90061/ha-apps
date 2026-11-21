@@ -26,6 +26,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
   const [reloadKey, setReloadKey] = useState(0);
 
   const [quality, setQuality] = useState<'original' | '1080p' | '720p'>('original');
+  const [forceH264, setForceH264] = useState(false);
   const [audioTracks, setAudioTracks] = useState<AudioTrack[]>([]);
   const [selectedAudio, setSelectedAudio] = useState<number>(0);
 
@@ -89,7 +90,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
   // 1. 取得串流決策（初次進入或切換畫質/音軌時觸發）
   useEffect(() => {
     let isMounted = true;
-    const allowHEVC = detectHEVCSupport();
+    const allowHEVC = detectHEVCSupport() && !forceH264;
 
     setLoading(true);
     setError(null);
@@ -124,7 +125,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     return () => {
       isMounted = false;
     };
-  }, [fileId, quality, selectedAudio, reloadKey]);
+  }, [fileId, quality, selectedAudio, forceH264, reloadKey]);
 
   // 2. 初始化播放器 (Direct Play HTTP 206 vs HLS 切片串流)
   useEffect(() => {
@@ -324,6 +325,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
             }
             break;
           case Hls.ErrorTypes.MEDIA_ERROR:
+            if (
+              !forceH264 &&
+              decision.mode === 'remux' &&
+              (media.video_codec.toLowerCase() === 'hevc' || media.video_codec.toLowerCase() === 'h265')
+            ) {
+              if (video.currentTime > 1) {
+                savedTimeRef.current = video.currentTime;
+              }
+              hls.destroy();
+              setForceH264(true);
+              setQuality('1080p');
+              return;
+            }
             if (fatalMediaRetries < 2) {
               fatalMediaRetries += 1;
               hls.recoverMediaError();
@@ -821,10 +835,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
                 回到上次位置（{formatDuration(lastValidTimeRef.current)}）
               </button>
             )}
-            {quality === 'original' && (
+            {(quality === 'original' || !forceH264) && (
               <button
                 type="button"
-                onClick={() => handleQualityChange('1080p')}
+                onClick={() => {
+                  setForceH264(true);
+                  handleQualityChange('1080p');
+                }}
                 className="h-9 px-4 rounded-lg bg-raised hover:bg-hover text-ink-primary font-medium text-xs border border-border-strong"
               >
                 切換為 1080p 兼容轉碼

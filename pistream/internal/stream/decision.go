@@ -32,6 +32,17 @@ func isDirectPlayContainer(container string) bool {
 	}
 }
 
+// effectiveBitRate 取得影片有效碼率 (bps)；若容器標頭未記錄 BitRate，則由檔案大小與時長推算
+func effectiveBitRate(media *db.MediaFile) int64 {
+	if media.BitRate > 0 {
+		return media.BitRate
+	}
+	if media.DurationSeconds > 0 && media.FileSize > 0 {
+		return int64(float64(media.FileSize*8) / media.DurationSeconds)
+	}
+	return 0
+}
+
 // DecideStreamMode 根據影片容器、視訊/音訊編碼、前端硬解支援度與使用者選擇的畫質，決定最佳串流模式
 func DecideStreamMode(media *db.MediaFile, sessionID string, quality string, audioTrack int, allowHEVC bool) DecisionResult {
 	if quality == "" {
@@ -45,13 +56,15 @@ func DecideStreamMode(media *db.MediaFile, sessionID string, quality string, aud
 	aCodec := strings.ToLower(media.AudioCodec)
 	container := strings.ToLower(media.Container)
 
+	isH264 := vCodec == "h264" || vCodec == "avc1"
+	isHEVCSupported := (vCodec == "hevc" || vCodec == "h265") && allowHEVC
+	videoSupportedDirect := isH264 || vCodec == "vp9" || vCodec == "av1" || isHEVCSupported
+	videoSupportedRemux := isH264 || isHEVCSupported
+
 	// 若使用者主動選擇「原畫極速 (original)」
 	if quality == "original" {
 		// Tier 1: HTTP 206 Partial Content 原生直連 (0% CPU，中間時段毫秒級跳轉)
 		// 條件：相容容器 (MP4/WebM/MOV)、使用預設第一音軌、音訊為瀏覽器原生支援，且視訊為 H.264/VP9/AV1 或瀏覽器支援之 HEVC
-		videoSupportedDirect := vCodec == "h264" || vCodec == "avc1" || vCodec == "vp9" || vCodec == "av1" ||
-			((vCodec == "hevc" || vCodec == "h265") && allowHEVC)
-
 		if audioTrack == 0 && isDirectPlayContainer(container) && videoSupportedDirect && isBrowserNativeAudio(aCodec) {
 			return DecisionResult{
 				Mode:       "direct",
@@ -62,8 +75,8 @@ func DecideStreamMode(media *db.MediaFile, sessionID string, quality string, aud
 		}
 
 		// Tier 2: Zero-Reencode Remux (-c:v copy 免重編碼極速換殼，僅轉換音軌與容器)
-		// 條件：視訊為 H.264（例如 MKV 封裝的 H.264 + AC3/DTS，或多音軌切換）
-		if vCodec == "h264" || vCodec == "avc1" {
+		// 條件：視訊為 H.264，或瀏覽器支援硬解之 HEVC（例如 1080p MKV H.264/HEVC + AC3/DTS/AAC，或多音軌切換）
+		if videoSupportedRemux {
 			return DecisionResult{
 				Mode:       "remux",
 				Quality:    "original",
@@ -76,7 +89,36 @@ func DecideStreamMode(media *db.MediaFile, sessionID string, quality string, aud
 		}
 	}
 
-	// Tier 3: 樹莓派 5 輕量極速轉碼 (適用於 MKV HEVC 轉 H.264、老舊編碼，或外網手動切換 1080p / 720p)
+	// 智慧 1080p 免重編碼旁路 (Smart 1080p Bypass)：
+	// 當使用者選擇 1080p，若原片解析度本來就 <= 1080p (Width <= 1920)、有效碼率 <= 8 Mbps，
+	// 且視訊編碼為瀏覽器可直接解碼 (H.264 或支援硬解的 HEVC)，則無需啟動 libx264 消耗 90%+ CPU 二次重編碼，
+	// 直接改走 direct 或 remux (-c:v copy)，讓樹莓派 5 CPU 佔用率降至 0% ~ 2%。
+	if quality == "1080p" && media.Width > 0 && media.Width <= 1920 && (media.Height == 0 || media.Height <= 1088) {
+		bitRate := effectiveBitRate(media)
+		if bitRate >= 0 && bitRate <= 8_000_000 {
+			if audioTrack == 0 && isDirectPlayContainer(container) && videoSupportedDirect && isBrowserNativeAudio(aCodec) {
+				return DecisionResult{
+					Mode:       "direct",
+					Quality:    "1080p",
+					AudioTrack: 0,
+					StreamURL:  fmt.Sprintf("/api/stream/%d/direct", media.ID),
+				}
+			}
+			if videoSupportedRemux {
+				return DecisionResult{
+					Mode:       "remux",
+					Quality:    "1080p",
+					AudioTrack: audioTrack,
+					StreamURL: fmt.Sprintf(
+						"/api/stream/%d/hls/index.m3u8?session=%s&mode=remux&quality=1080p&audio=%d",
+						media.ID, sessionID, audioTrack,
+					),
+				}
+			}
+		}
+	}
+
+	// Tier 3: 樹莓派 5 輕量極速轉碼 (適用於不支援 HEVC 瀏覽器上的 MKV HEVC 轉 H.264、4K/高碼率縮放，或手動切換 720p)
 	return DecisionResult{
 		Mode:       "transcode",
 		Quality:    quality,

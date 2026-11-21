@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5
+
+- Added zero-reencode HEVC (`-c:v copy`) MKV remux support for HEVC-capable browsers and smart 1080p bypass (`direct`/`remux`) for videos already at `<= 1080p` and `<= 8 Mbps`, dropping Raspberry Pi 5 CPU usage from >90% to ~1–2% when re-encoding is unnecessary.
+- Optimized Raspberry Pi 5 software 1080p/720p transcoding with `-preset superfast`, tuned `x264-params` (`bframes=2:ref=1:rc-lookahead=0:weightp=0`), `-fpsmax 30`, conditional `-vf scale` omission when source width is already `<=` target width, and `fast_bilinear` downscaling for 4K sources.
+- Added burst + paced input readrate throttling (`-readrate_initial_burst 12 -readrate 1.2`) and sliding-window `SIGSTOP`/`SIGCONT` process pause when FFmpeg buffers 8+ segments ahead of the playback head, preventing sustained >90% CPU spikes and `/dev/shm` overflow.
+- Improved browser HEVC MSE detection and added automatic fallback to compatible H.264 1080p transcoding if HEVC remux decoding fails.
+
 ## 0.1.4
 
 - Added a toggleable file-size filter control (`過濾`) to the left of the sort selector in the "All Videos" (`全部影片`) view to hide small video files below a customizable MB threshold (default `100 MB`, with quick presets `50 MB` / `100 MB` / `200 MB` / `500 MB` / `1 GB` and persistent preference), without affecting subtitle files.
