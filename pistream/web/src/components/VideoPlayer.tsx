@@ -35,6 +35,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
   const [subtitleOffset, setSubtitleOffset] = useState<number>(0);
   const subtitleOffsetRef = useRef<number>(0);
   const cueOrigTimesRef = useRef<WeakMap<TextTrackCue, { start: number; end: number }>>(new WeakMap());
+  const subtitleRefreshRafRef = useRef<number | null>(null);
   const seekSeqRef = useRef<number>(0);
   const [subtitleScale, setSubtitleScale] = useState<number>(() => {
     const saved = Number(localStorage.getItem('pistream_subtitle_scale'));
@@ -53,8 +54,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     const cues = track.cues;
     if (!cues || cues.length === 0) return;
 
-    for (let i = 0; i < cues.length; i++) {
-      const cue = cues[i];
+    // 1. 先將動態排序的 TextTrackCueList 轉成靜態快照，避免修改 startTime 時陣列即時重排而跳過部分字幕
+    const cueList = Array.from(cues);
+
+    // 2. 在位移或重置時暫切為 hidden 清空瀏覽器 Shadow DOM 字幕盒，防止暫停畫面下舊字幕殘留造成雙字幕重疊
+    const wasShowing = track.mode === 'showing' || subtitleRefreshRafRef.current !== null;
+    const needsRedraw = wasShowing && (offsetSec !== 0 || cueList.some((c) => cueOrigTimesRef.current.has(c)));
+    if (subtitleRefreshRafRef.current !== null) {
+      window.cancelAnimationFrame(subtitleRefreshRafRef.current);
+      subtitleRefreshRafRef.current = null;
+    }
+    if (needsRedraw) {
+      track.mode = 'hidden';
+    }
+
+    for (const cue of cueList) {
       let orig = cueOrigTimesRef.current.get(cue);
       if (!orig) {
         orig = { start: cue.startTime, end: cue.endTime };
@@ -62,12 +76,33 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
       }
       const nextStart = Math.max(0, Number((orig.start + offsetSec).toFixed(3)));
       const nextEnd = Math.max(nextStart + 0.1, Number((orig.end + offsetSec).toFixed(3)));
-      if (Math.abs(cue.startTime - nextStart) > 0.001) {
-        cue.startTime = nextStart;
+
+      // 3. 依位移方向決定賦值順序，避免往後延遲時瞬間出現 startTime > endTime 的無效反轉狀態
+      if (nextStart > cue.endTime) {
+        if (Math.abs(cue.endTime - nextEnd) > 0.001) {
+          cue.endTime = nextEnd;
+        }
+        if (Math.abs(cue.startTime - nextStart) > 0.001) {
+          cue.startTime = nextStart;
+        }
+      } else {
+        if (Math.abs(cue.startTime - nextStart) > 0.001) {
+          cue.startTime = nextStart;
+        }
+        if (Math.abs(cue.endTime - nextEnd) > 0.001) {
+          cue.endTime = nextEnd;
+        }
       }
-      if (Math.abs(cue.endTime - nextEnd) > 0.001) {
-        cue.endTime = nextEnd;
-      }
+    }
+
+    // 4. 在下一個繪製幀切回 showing，強制瀏覽器於暫停狀態下重新計算 activeCues 並繪製正確的單一字幕
+    if (needsRedraw) {
+      subtitleRefreshRafRef.current = window.requestAnimationFrame(() => {
+        subtitleRefreshRafRef.current = null;
+        if (videoRef.current?.textTracks?.[0] === track) {
+          track.mode = 'showing';
+        }
+      });
     }
   };
 
@@ -408,6 +443,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     window.addEventListener('pagehide', handleUnload);
     window.addEventListener('beforeunload', handleUnload);
     return () => {
+      if (subtitleRefreshRafRef.current !== null) {
+        window.cancelAnimationFrame(subtitleRefreshRafRef.current);
+        subtitleRefreshRafRef.current = null;
+      }
       window.removeEventListener('pagehide', handleUnload);
       window.removeEventListener('beforeunload', handleUnload);
       api.stopStream(activeSession);
@@ -419,6 +458,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     setSelectedSub(subId);
     const video = videoRef.current;
     if (!video) return;
+
+    if (subtitleRefreshRafRef.current !== null) {
+      window.cancelAnimationFrame(subtitleRefreshRafRef.current);
+      subtitleRefreshRafRef.current = null;
+    }
 
     while (video.querySelector('track')) {
       const t = video.querySelector('track');
