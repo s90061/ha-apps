@@ -34,20 +34,77 @@ type HLSSession struct {
 }
 
 type HLSManager struct {
-	cfg      *config.Config
-	sessions map[string]*HLSSession
-	mu       sync.RWMutex
+	cfg             *config.Config
+	sessions        map[string]*HLSSession
+	stoppedSessions map[string]time.Time
+	mu              sync.RWMutex
 }
 
 func NewHLSManager(cfg *config.Config) *HLSManager {
 	_ = os.MkdirAll(cfg.TranscodeTempDir, 0755)
 	mgr := &HLSManager{
-		cfg:      cfg,
-		sessions: make(map[string]*HLSSession),
+		cfg:             cfg,
+		sessions:        make(map[string]*HLSSession),
+		stoppedSessions: make(map[string]time.Time),
 	}
 	go mgr.throttleLoop()
 	go mgr.cleanupLoop()
 	return mgr
+}
+
+func (m *HLSManager) isSessionStopped(sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	m.mu.RLock()
+	_, stopped := m.stoppedSessions[sessionID]
+	m.mu.RUnlock()
+	return stopped
+}
+
+// StopSession 主動立即終止指定 Session 的 FFmpeg 轉碼/換殼行程並清除暫存切片。
+// 當 tombstone=true 時會短暫標記該 sessionID 為已終止，防止關閉播放器瞬間仍在途中的切片請求重新喚起 FFmpeg。
+func (m *HLSManager) StopSession(sessionID string, tombstone bool) bool {
+	if sessionID == "" {
+		return false
+	}
+
+	m.mu.Lock()
+	if tombstone {
+		m.stoppedSessions[sessionID] = time.Now()
+	}
+	sess, exists := m.sessions[sessionID]
+	if exists {
+		delete(m.sessions, sessionID)
+	}
+	m.mu.Unlock()
+
+	if !exists {
+		return false
+	}
+
+	sess.mu.Lock()
+	fmt.Printf("[HLSManager] 主動停止並回收 Session: %s\n", sessionID)
+	m.terminateSessionLocked(sess)
+	sess.mu.Unlock()
+	return true
+}
+
+func (m *HLSManager) terminateSessionLocked(sess *HLSSession) {
+	if sess.CancelFunc != nil {
+		m.resumeFFmpegLocked(sess)
+		sess.CancelFunc()
+		if sess.ProcessDone != nil {
+			select {
+			case <-sess.ProcessDone:
+			case <-time.After(2 * time.Second):
+			}
+		}
+		sess.CancelFunc = nil
+	}
+	if sess.OutputDir != "" {
+		_ = os.RemoveAll(sess.OutputDir)
+	}
 }
 
 // GenerateVirtualPlaylist 瞬間生成完整時間軸的虛擬 VOD M3U8 清單，讓前端可隨時跳轉至影片任意時段
@@ -113,6 +170,10 @@ func (m *HLSManager) getOrCreateSession(sessionID string, media *db.MediaFile, m
 
 // EnsureSegmentReady 確保請求的切片已就緒；若偵測到使用者拖拉時間軸，立即重啟 FFmpeg 跳轉至新時段
 func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, sessionID string, media *db.MediaFile, mode, quality string, audioTrack, segIndex int, seekSeq string) (string, error) {
+	if m.isSessionStopped(sessionID) {
+		return "", context.Canceled
+	}
+
 	sess := m.getOrCreateSession(sessionID, media, mode, quality, audioTrack)
 
 	targetSegPath := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", segIndex))
@@ -143,10 +204,10 @@ func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, sessionID string
 				sess.CurrentHeadSeg = segIndex
 				m.pruneOldSegmentsLocked(sess, segIndex)
 			}
-			// 若前瞻緩衝低於 5 個切片 (20秒)，提前喚醒已暫停的 FFmpeg 繼續補充切片
+			// 若前瞻緩衝低於 3 個切片 (12秒)，提前喚醒已暫停的 FFmpeg 繼續補充切片
 			if sess.IsPaused {
-				lowWaterSeg := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+5))
-				lowWaterNext := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+6))
+				lowWaterSeg := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+3))
+				lowWaterNext := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+4))
 				if !isSegmentComplete(lowWaterSeg, lowWaterNext, sess.ProcessDone) {
 					m.resumeFFmpegLocked(sess)
 				}
@@ -347,7 +408,7 @@ func (m *HLSManager) resumeFFmpegLocked(sess *HLSSession) {
 	sess.IsPaused = false
 }
 
-// throttleLoop 前瞻緩衝節流迴圈：當 FFmpeg 產生的切片超前播放頭達 8 個 (32秒) 時自動發送 SIGSTOP 暫停轉碼，
+// throttleLoop 前瞻緩衝節流迴圈：當 FFmpeg 產生的切片超前播放頭達 6 個 (24秒) 時自動發送 SIGSTOP 暫停轉碼，
 // 讓樹莓派 CPU 瞬間降至 0% 並防止未播切片塞滿 /dev/shm 或 /tmp
 func (m *HLSManager) throttleLoop() {
 	ticker := time.NewTicker(1 * time.Second)
@@ -362,8 +423,8 @@ func (m *HLSManager) throttleLoop() {
 		for _, sess := range sessions {
 			sess.mu.Lock()
 			if !sess.IsPaused && sess.Cmd != nil && !isProcessExited(sess.ProcessDone) && sess.CurrentHeadSeg >= 0 {
-				highWaterSeg := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+8))
-				highWaterNext := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+9))
+				highWaterSeg := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+6))
+				highWaterNext := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+7))
 				if isSegmentComplete(highWaterSeg, highWaterNext, sess.ProcessDone) {
 					m.pauseFFmpegLocked(sess)
 				}
@@ -374,24 +435,33 @@ func (m *HLSManager) throttleLoop() {
 }
 
 func (m *HLSManager) cleanupLoop() {
-	ticker := time.NewTicker(25 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	for range ticker.C {
 		m.mu.Lock()
 		now := time.Now()
+		var expired []*HLSSession
 		for id, sess := range m.sessions {
 			sess.mu.Lock()
-			if now.Sub(sess.LastActive) > 60*time.Second {
+			isIdle := now.Sub(sess.LastActive) > 45*time.Second
+			sess.mu.Unlock()
+			if isIdle {
 				fmt.Printf("[HLSManager] 回收閒置 Session: %s\n", id)
-				if sess.CancelFunc != nil {
-					m.resumeFFmpegLocked(sess)
-					sess.CancelFunc()
-				}
-				_ = os.RemoveAll(sess.OutputDir)
+				expired = append(expired, sess)
 				delete(m.sessions, id)
 			}
-			sess.mu.Unlock()
+		}
+		for id, stoppedAt := range m.stoppedSessions {
+			if now.Sub(stoppedAt) > 2*time.Minute {
+				delete(m.stoppedSessions, id)
+			}
 		}
 		m.mu.Unlock()
+
+		for _, sess := range expired {
+			sess.mu.Lock()
+			m.terminateSessionLocked(sess)
+			sess.mu.Unlock()
+		}
 	}
 }
 

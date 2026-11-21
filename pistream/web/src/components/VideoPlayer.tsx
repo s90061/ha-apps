@@ -399,6 +399,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     };
   }, [fileId, streamInfo]);
 
+  // 3.5 關閉播放器、離開頁面或關閉瀏覽器分頁時，立刻通知後端終止 FFmpeg 轉碼釋放樹莓派 CPU
+  useEffect(() => {
+    const activeSession = sessionRef.current;
+    const handleUnload = () => {
+      api.stopStreamBeacon(activeSession);
+    };
+    window.addEventListener('pagehide', handleUnload);
+    window.addEventListener('beforeunload', handleUnload);
+    return () => {
+      window.removeEventListener('pagehide', handleUnload);
+      window.removeEventListener('beforeunload', handleUnload);
+      api.stopStream(activeSession);
+    };
+  }, [fileId]);
+
   // 4. 切換外掛或內嵌字幕
   const handleSubtitleChange = (subId: string) => {
     setSelectedSub(subId);

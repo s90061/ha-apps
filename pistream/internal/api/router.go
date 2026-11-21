@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -320,12 +322,36 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 		allowHEVC := r.URL.Query().Get("hevc") == "1" || r.URL.Query().Get("hevc") == "true"
 
 		decision := stream.DecideStreamMode(media, sessionID, quality, audioTrack, allowHEVC)
+		if decision.Mode == "direct" {
+			// 若由 HLS 轉碼/換殼切回原生直連 (direct)，立刻終止背景 FFmpeg 行程釋放 CPU
+			hlsMgr.StopSession(sessionID, false)
+		}
 		prog, _ := store.GetProgress(u.UserID, fileID)
 
 		writeJSON(w, http.StatusOK, map[string]any{
 			"media":    media,
 			"decision": decision,
 			"progress": prog,
+		})
+	}))
+
+	mux.HandleFunc("POST /api/stream/stop", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		sessionID := strings.TrimSpace(r.URL.Query().Get("session"))
+		if sessionID == "" && r.Body != nil {
+			var body struct {
+				Session string `json:"session"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+				sessionID = strings.TrimSpace(body.Session)
+			}
+		}
+		stopped := false
+		if sessionID != "" {
+			stopped = hlsMgr.StopSession(sessionID, true)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":  "stopped",
+			"stopped": stopped,
 		})
 	}))
 
@@ -414,6 +440,10 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 
 		segPath, err := hlsMgr.EnsureSegmentReady(r.Context(), sessionID, media, mode, quality, audioTrack, segIdx, seekSeq)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusGatewayTimeout)
 			return
 		}

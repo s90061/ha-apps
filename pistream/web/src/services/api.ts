@@ -137,4 +137,33 @@ export const api = {
     request<{ status: string }>(`/api/stream/${fileId}/progress`, {
       method: 'DELETE',
     }),
+
+  stopStream: (session: string) => {
+    if (!session) return;
+    const url = resolveUrl(`/api/stream/stop?session=${encodeURIComponent(session)}`);
+    fetch(url, {
+      method: 'POST',
+      credentials: 'include',
+      keepalive: true,
+    }).catch(() => {});
+  },
+
+  stopStreamBeacon: (session: string) => {
+    if (!session) return;
+    const url = resolveUrl(`/api/stream/stop?session=${encodeURIComponent(session)}`);
+    if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+      try {
+        if (navigator.sendBeacon(url)) {
+          return;
+        }
+      } catch {
+        // fallback to keepalive fetch
+      }
+    }
+    fetch(url, {
+      method: 'POST',
+      credentials: 'include',
+      keepalive: true,
+    }).catch(() => {});
+  },
 };
