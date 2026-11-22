@@ -91,6 +91,7 @@ type HLSSession struct {
 	AudioTrack     int
 	LastSeekSeq    string
 	OutputDir      string
+	StartSeg       int
 	CurrentHeadSeg int
 	LastActive     time.Time
 	CancelFunc     context.CancelFunc
@@ -275,6 +276,7 @@ func (m *HLSManager) getOrCreateSession(ownerUserID int64, sessionID string, med
 		Quality:        quality,
 		AudioTrack:     audioTrack,
 		OutputDir:      outDir,
+		StartSeg:       -1,
 		CurrentHeadSeg: -100,
 		LastActive:     time.Now(),
 	}
@@ -317,9 +319,15 @@ func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, ownerUserID int6
 	sess.mu.Lock()
 	sess.LastActive = time.Now()
 
-	// 若切換了畫質或音軌，或前端觸發了跨緩衝區跳轉 (seekSeq 變更)，強制清除舊切片並重啟 FFmpeg
+	// 若切換了畫質或音軌，或前端觸發了跨緩衝區跳轉 (seekSeq 變更)，強制清除舊切片並重啟 FFmpeg；
+	// 但若剛跳轉啟動的 FFmpeg 仍在連續輸出且前端緊接著請求同一起點附近緊鄰的切片 (例如 Seg=820 -> Seg=821)，
+	// 直接沿用現有 FFmpeg 的連續切片，避免 remux 重啟後退回同一個關鍵幀造成畫面重複閃跳與影音錯位。
 	configChanged := sess.Mode != mode || sess.Quality != quality || sess.AudioTrack != audioTrack
 	seekChanged := seekSeq != "" && seekSeq != sess.LastSeekSeq
+	if seekChanged && !configChanged && canReuseAdjacentSeekLocked(sess, segIndex, targetSegPath, nextSegPath) {
+		sess.LastSeekSeq = seekSeq
+		seekChanged = false
+	}
 	if configChanged || seekChanged {
 		sess.Mode = mode
 		sess.Quality = quality
@@ -421,6 +429,7 @@ func (m *HLSManager) restartFFmpegLocked(sess *HLSSession, startSeg int) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	sess.CancelFunc = cancel
+	sess.StartSeg = startSeg
 	sess.CurrentHeadSeg = startSeg
 	sess.ProcessDone = make(chan struct{})
 	sess.IsPaused = false
@@ -570,6 +579,19 @@ func (m *HLSManager) clearAllSegmentsLocked(sess *HLSSession) {
 			_ = os.Remove(filepath.Join(sess.OutputDir, name))
 		}
 	}
+}
+
+func canReuseAdjacentSeekLocked(sess *HLSSession, segIndex int, targetPath, nextPath string) bool {
+	if sess.StartSeg < 0 {
+		return false
+	}
+	if segIndex < sess.StartSeg || segIndex > sess.CurrentHeadSeg+1 || (segIndex-sess.StartSeg) > 2 {
+		return false
+	}
+	if sess.Cmd != nil && !isProcessExited(sess.ProcessDone) {
+		return true
+	}
+	return isSegmentComplete(targetPath, nextPath, sess.ProcessDone)
 }
 
 func isSegmentComplete(targetPath, nextPath string, procDone chan struct{}) bool {

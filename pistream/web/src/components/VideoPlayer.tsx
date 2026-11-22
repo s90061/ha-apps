@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
-import { ArrowLeft, Maximize2, Minimize2, Pause, Play, RotateCcw, RotateCw } from './Icons';
+import { ArrowLeft, Maximize2, Minimize2, Pause, Play, RotateCcw, RotateCw, Volume1, Volume2, VolumeX } from './Icons';
 import { CinemaSelect } from './CinemaSelect';
 import { AudioTrack, StreamInfo, SubtitleTrack } from '../types';
 import { api, detectEAC3Support, detectHEVCDirectSupport, detectHEVCHlsSupport, resolveUrl } from '../services/api';
@@ -157,12 +157,34 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
 
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [bufferedEnd, setBufferedEnd] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [volume, setVolume] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('pistream_volume'));
+    return Number.isFinite(saved) && saved >= 0 && saved <= 1 ? saved : 1;
+  });
+  const [isMuted, setIsMuted] = useState<boolean>(() => localStorage.getItem('pistream_muted') === '1');
+  const [scrubTime, setScrubTime] = useState<number | null>(null);
+  const [hoverTime, setHoverTime] = useState<number | null>(null);
+  const [hoverPct, setHoverPct] = useState<number>(0);
+
   const hideTimerRef = useRef<number | null>(null);
   const hoveringTopBarRef = useRef<boolean>(false);
+  const hoveringBottomBarRef = useRef<boolean>(false);
+  const isScrubbingRef = useRef<boolean>(false);
+  const lastTouchTimeRef = useRef<number>(0);
   const topBarRef = useRef<HTMLDivElement>(null);
+  const seekBarRef = useRef<HTMLDivElement>(null);
+
+  // 初始化時還原使用者的音量與靜音偏好
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.volume = volume;
+    video.muted = isMuted;
+  }, []);
 
   // 1. 取得串流決策（初次進入或切換畫質/音軌時觸發）
   useEffect(() => {
@@ -265,10 +287,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
       let fatalNetworkRetries = 0;
       let fatalMediaRetries = 0;
       let needRestartLoadOnSeek = false;
+      let ignoreNextSeeking = false;
+      let lastHlsNudgeAt = 0;
+      let lastOutBufferSeekTarget: number | null = null;
+      let lastOutBufferSeekAt = 0;
 
-      // 當使用者拖拉時間軸至未緩衝區間時，重設所有切片的預期時間為標準 4 秒網格 (sn * 4)，
-      // 消除 remux (-c:v copy) 模式下因關鍵幀長度 > 4 秒所造成的 alignSliding 累積切片編號偏移，
-      // 並附帶遞增的 seek 序號通知後端立即重啟 FFmpeg 定位至正確秒數。
+      // 當使用者拖拉時間軸至未緩衝區間時，重設所有切片的預期時間為標準切片網格 (sn * segDur)，
+      // 消除 remux (-c:v copy) 模式下因關鍵幀長度 > segDur 所造成的 alignSliding 累積切片編號偏移，
+      // 同時重設 hls.js Transmuxer（保留 initPTS、清除 lastFrag / isVideoContiguous / nextVideoTs），
+      // 防止重啟 FFmpeg 後緊鄰切片 (snDiff === 1) 退回同一個關鍵幀時，MP4Remuxer.remuxVideo 誤判為連續切片而將畫面推遲一整個 GOP。
       const resetFragmentsForOutBufferSeek = () => {
         seekSeqRef.current += 1;
         const seq = seekSeqRef.current;
@@ -278,10 +305,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
         ];
         for (const details of levelDetailsList) {
           if (!details || !Array.isArray(details.fragments)) continue;
+          const segDur = typeof details.targetduration === 'number' && details.targetduration > 0 ? details.targetduration : 4;
           for (const f of details.fragments as any[]) {
             if (typeof f.sn === 'number') {
-              f.start = f.sn * 4;
-              f.duration = 4;
+              f.start = f.sn * segDur;
+              f.duration = segDur;
               delete f.startPTS;
               delete f.endPTS;
               delete f.startDTS;
@@ -294,14 +322,34 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
           }
         }
         try {
-          (hls as any).streamController?.fragmentTracker?.removeAllFragments?.();
+          const sc = (hls as any).streamController;
+          // 若首片尚未載完就提前跳轉時間軸，預鎖 initPTS=0 避免 computeInitPts 因關鍵幀落差產生永久時間軸偏移
+          if (sc && Array.isArray(sc.initPTS) && !sc.initPTS[0]) {
+            sc.initPTS[0] = { baseTime: 0, timescale: 90000, trackId: -1 };
+          }
+          sc?.resetTransmuxer?.();
+          if (sc) {
+            sc.fragPrevious = null;
+          }
+          sc?.fragmentTracker?.removeAllFragments?.();
         } catch {
-          // ignore internal hls.js tracker cleanup errors
+          // ignore internal hls.js tracker/transmuxer cleanup errors
         }
       };
 
       const onVideoSeeking = () => {
         const cur = video.currentTime;
+        if (ignoreNextSeeking) {
+          ignoreNextSeeking = false;
+          if (needRestartLoadOnSeek && hlsRef.current) {
+            needRestartLoadOnSeek = false;
+            hlsRef.current.startLoad(cur);
+          }
+          return;
+        }
+        if (pendingInitialSeek !== null && Math.abs(cur - pendingInitialSeek) > 1.5) {
+          pendingInitialSeek = null;
+        }
         const buffered = video.buffered;
         let inBuffer = false;
         for (let i = 0; i < buffered.length; i++) {
@@ -311,14 +359,25 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
           }
         }
         if (!inBuffer) {
-          resetFragmentsForOutBufferSeek();
+          const now = Date.now();
+          const isRecentHlsNudge = now - lastHlsNudgeAt < 400;
+          const isNearActiveSeek =
+            lastOutBufferSeekTarget !== null &&
+            now - lastOutBufferSeekAt < 3500 &&
+            cur >= lastOutBufferSeekTarget - 0.5 &&
+            cur <= lastOutBufferSeekTarget + 2.0;
+          if (!isRecentHlsNudge && !isNearActiveSeek) {
+            lastOutBufferSeekTarget = cur;
+            lastOutBufferSeekAt = now;
+            resetFragmentsForOutBufferSeek();
+          }
         }
         if (needRestartLoadOnSeek && hlsRef.current) {
           needRestartLoadOnSeek = false;
           hlsRef.current.startLoad(video.currentTime);
         }
       };
-      // 使用 capture: true 確保在 hls.js 內部的 onMediaSeeking 選取切片前先完成 4 秒網格校正
+      // 使用 capture: true 確保在 hls.js 內部的 onMediaSeeking 選取切片前先完成網格校正與 Transmuxer 重設
       video.addEventListener('seeking', onVideoSeeking, { capture: true });
       cleanupSeekingListener = () => {
         video.removeEventListener('seeking', onVideoSeeking, { capture: true });
@@ -365,6 +424,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
           }
         }
         if (!inBuffer && nearestStart !== null) {
+          ignoreNextSeeking = true;
           video.currentTime = nearestStart + 0.02;
           video.play().catch(() => {});
         }
@@ -376,6 +436,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
             needRestartLoadOnSeek = true;
           }
           if (
+            data.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL ||
+            data.details === Hls.ErrorDetails.BUFFER_SEEK_OVER_HOLE
+          ) {
+            lastHlsNudgeAt = Date.now();
+          }
+          if (
             data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
             data.details === Hls.ErrorDetails.BUFFER_SEEK_OVER_HOLE
           ) {
@@ -385,6 +451,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
               const start = buffered.start(i);
               const end = buffered.end(i);
               if (start > cur && start - cur <= 5 && end > start + 0.1) {
+                ignoreNextSeeking = true;
                 video.currentTime = start + 0.05;
                 break;
               }
@@ -545,13 +612,80 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     setSelectedAudio(newAudioIdx);
   };
 
+  const getEffectiveDuration = () => {
+    if (duration > 0) return duration;
+    const vDur = videoRef.current?.duration;
+    return typeof vDur === 'number' && Number.isFinite(vDur) && vDur > 0 ? vDur : 0;
+  };
+
+  const syncBufferedRange = (video: HTMLVideoElement | null) => {
+    if (!video) return;
+    const buffered = video.buffered;
+    const cur = video.currentTime;
+    let end = 0;
+    for (let i = 0; i < buffered.length; i++) {
+      const s = buffered.start(i);
+      const e = buffered.end(i);
+      if (cur >= s - 1 && cur <= e + 1) {
+        end = Math.max(end, e);
+      } else if (end === 0 && e > cur && s <= cur + 2) {
+        end = e;
+      }
+    }
+    setBufferedEnd(end);
+  };
+
+  const seekTo = (targetSec: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    const maxDur = getEffectiveDuration();
+    const clamped = maxDur > 0 ? Math.max(0, Math.min(maxDur, targetSec)) : Math.max(0, targetSec);
+    video.currentTime = clamped;
+    setCurrentTime(clamped);
+  };
+
   const seekRelative = (deltaSec: number) => {
     const video = videoRef.current;
     if (!video) return;
-    const maxDur = duration || video.duration || 0;
-    const nextPos = Math.max(0, Math.min(maxDur, video.currentTime + deltaSec));
-    video.currentTime = nextPos;
-    setCurrentTime(nextPos);
+    seekTo(video.currentTime + deltaSec);
+  };
+
+  const togglePlayPause = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) {
+      video.play().catch(() => {});
+    } else {
+      video.pause();
+    }
+  };
+
+  const applyVolume = (nextVol: number) => {
+    const video = videoRef.current;
+    const clamped = Math.max(0, Math.min(1, Number(nextVol.toFixed(2))));
+    const nextMuted = clamped === 0;
+    setVolume(clamped);
+    setIsMuted(nextMuted);
+    localStorage.setItem('pistream_volume', String(clamped));
+    localStorage.setItem('pistream_muted', nextMuted ? '1' : '0');
+    if (video) {
+      video.volume = clamped;
+      video.muted = nextMuted;
+    }
+  };
+
+  const toggleMute = () => {
+    const video = videoRef.current;
+    const nextMuted = !(video ? video.muted : isMuted);
+    if (!nextMuted && (video ? video.volume : volume) === 0) {
+      applyVolume(0.5);
+      return;
+    }
+    setIsMuted(nextMuted);
+    localStorage.setItem('pistream_muted', nextMuted ? '1' : '0');
+    if (video) {
+      video.muted = nextMuted;
+    }
   };
 
   const isDropdownOpen = () => Boolean(topBarRef.current?.querySelector('[aria-expanded="true"]'));
@@ -565,11 +699,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
 
   const scheduleAutoHide = () => {
     clearHideTimer();
-    if (!isPlaying || loading || error || hoveringTopBarRef.current || isDropdownOpen()) {
+    if (
+      !isPlaying ||
+      loading ||
+      error ||
+      hoveringTopBarRef.current ||
+      hoveringBottomBarRef.current ||
+      isScrubbingRef.current ||
+      isDropdownOpen()
+    ) {
       return;
     }
     hideTimerRef.current = window.setTimeout(() => {
-      if (!hoveringTopBarRef.current && !isDropdownOpen()) {
+      if (!hoveringTopBarRef.current && !hoveringBottomBarRef.current && !isScrubbingRef.current && !isDropdownOpen()) {
         setControlsVisible(false);
       }
     }, 2500);
@@ -578,6 +720,82 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
   const revealControls = () => {
     setControlsVisible(true);
     scheduleAutoHide();
+  };
+
+  const calcSeekTimeFromClientX = (clientX: number): { sec: number; pct: number } => {
+    const bar = seekBarRef.current;
+    const maxDur = getEffectiveDuration();
+    if (!bar || maxDur <= 0) return { sec: 0, pct: 0 };
+    const rect = bar.getBoundingClientRect();
+    if (rect.width <= 0) return { sec: 0, pct: 0 };
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return { sec: ratio * maxDur, pct: ratio * 100 };
+  };
+
+  const handleSeekPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    isScrubbingRef.current = true;
+    clearHideTimer();
+    setControlsVisible(true);
+    const { sec, pct } = calcSeekTimeFromClientX(e.clientX);
+    setScrubTime(sec);
+    setHoverTime(sec);
+    setHoverPct(pct);
+  };
+
+  const handleSeekPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const { sec, pct } = calcSeekTimeFromClientX(e.clientX);
+    setHoverTime(sec);
+    setHoverPct(pct);
+    if (isScrubbingRef.current) {
+      setScrubTime(sec);
+    }
+  };
+
+  const handleSeekPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isScrubbingRef.current) return;
+    e.stopPropagation();
+    isScrubbingRef.current = false;
+    const { sec } = calcSeekTimeFromClientX(e.clientX);
+    setScrubTime(null);
+    seekTo(sec);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    scheduleAutoHide();
+  };
+
+  const handleSeekPointerCancel = () => {
+    if (!isScrubbingRef.current) return;
+    isScrubbingRef.current = false;
+    setScrubTime(null);
+    scheduleAutoHide();
+  };
+
+  const handleVideoTouchStart = () => {
+    lastTouchTimeRef.current = Date.now();
+  };
+
+  const handleVideoClick = () => {
+    if (Date.now() - lastTouchTimeRef.current < 500) {
+      if (controlsVisible && isPlaying) {
+        clearHideTimer();
+        setControlsVisible(false);
+      } else {
+        revealControls();
+      }
+      return;
+    }
+    revealControls();
+    togglePlayPause();
+  };
+
+  const handleVideoDoubleClick = () => {
+    if (Date.now() - lastTouchTimeRef.current < 500) return;
+    toggleFullscreen();
   };
 
   // 監聽系統全螢幕狀態變更（包含按 Esc 退出全螢幕）
@@ -593,7 +811,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     };
   }, []);
 
-  // 播放中（含全視窗播放器、Home Assistant Ingress 與系統全螢幕）無操作 2.5 秒自動隱藏頂部資訊與控制列；暫停或載入時保持顯示
+  // 播放中（含全視窗播放器、Home Assistant Ingress 與系統全螢幕）無操作 2.5 秒自動隱藏上下控制列；暫停或載入時保持顯示
   useEffect(() => {
     if (isPlaying && !loading && !error) {
       scheduleAutoHide();
@@ -605,12 +823,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
   }, [isFullscreen, isPlaying, loading, error]);
 
   const toggleFullscreen = () => {
-    if (!containerRef.current) return;
+    const container = containerRef.current;
+    const video = videoRef.current as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null;
     if (!document.fullscreenElement) {
-      containerRef.current
-        .requestFullscreen()
-        .then(() => setIsFullscreen(true))
-        .catch(() => {});
+      if (container?.requestFullscreen) {
+        container
+          .requestFullscreen()
+          .then(() => setIsFullscreen(true))
+          .catch(() => {
+            video?.webkitEnterFullscreen?.();
+          });
+      } else {
+        video?.webkitEnterFullscreen?.();
+      }
     } else {
       document
         .exitFullscreen()
@@ -619,32 +844,41 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     }
   };
 
-  // 6. 鍵盤快捷鍵支援 (Space, 左右方向鍵快轉, F, M, Esc)
+  // 6. 鍵盤快捷鍵支援 (Space, 左右方向鍵快轉, 上下方向鍵音量, F, M, Esc)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const video = videoRef.current;
       if (!video) return;
+      const targetTag = (e.target as HTMLElement | null)?.tagName;
+      const isRangeInput = targetTag === 'INPUT';
 
       if (e.code === 'Space') {
         e.preventDefault();
         revealControls();
-        if (video.paused) video.play();
-        else video.pause();
-      } else if (e.code === 'ArrowRight') {
+        togglePlayPause();
+      } else if (e.code === 'ArrowRight' && !isRangeInput) {
         e.preventDefault();
         revealControls();
         seekRelative(10);
-      } else if (e.code === 'ArrowLeft') {
+      } else if (e.code === 'ArrowLeft' && !isRangeInput) {
         e.preventDefault();
         revealControls();
         seekRelative(-10);
+      } else if (e.code === 'ArrowUp' && !isRangeInput) {
+        e.preventDefault();
+        revealControls();
+        applyVolume((video.muted ? 0 : video.volume) + 0.05);
+      } else if (e.code === 'ArrowDown' && !isRangeInput) {
+        e.preventDefault();
+        revealControls();
+        applyVolume((video.muted ? 0 : video.volume) - 0.05);
       } else if (e.code === 'KeyF') {
         e.preventDefault();
         toggleFullscreen();
       } else if (e.code === 'KeyM') {
         e.preventDefault();
         revealControls();
-        video.muted = !video.muted;
+        toggleMute();
       } else if (e.code === 'Escape') {
         if (!document.fullscreenElement) {
           onClose();
@@ -654,7 +888,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [duration, onClose, isFullscreen, isPlaying, loading, error]);
+  }, [duration, volume, isMuted, onClose, isFullscreen, isPlaying, loading, error]);
 
   const modeLabelMap: Record<string, string> = {
     direct: 'Direct Play',
@@ -679,15 +913,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     return lang ? `內嵌：${base}（${lang}）` : `內嵌：${base}`;
   };
 
-  const hideTopBar = isPlaying && !loading && !error && !controlsVisible;
+  const effectiveDuration = getEffectiveDuration();
+  const displayTime = scrubTime !== null ? scrubTime : currentTime;
+  const progressPct = effectiveDuration > 0 ? Math.max(0, Math.min(100, (displayTime / effectiveDuration) * 100)) : 0;
+  const bufferedPct = effectiveDuration > 0 ? Math.max(0, Math.min(100, (bufferedEnd / effectiveDuration) * 100)) : 0;
+  const effectiveVolume = isMuted ? 0 : volume;
+  const volumePct = Math.round(effectiveVolume * 100);
+  const hideControls = isPlaying && !loading && !error && !controlsVisible && scrubTime === null;
 
   return (
     <div
       ref={containerRef}
       onMouseMove={revealControls}
-      onTouchStart={revealControls}
       className={`fixed inset-0 z-50 bg-black flex flex-col items-center justify-center select-none ${
-        hideTopBar ? 'cursor-none' : ''
+        hideControls ? 'cursor-none' : ''
       }`}
     >
       {/* Top Control Bar */}
@@ -702,8 +941,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
           hoveringTopBarRef.current = false;
           scheduleAutoHide();
         }}
+        onTouchStart={revealControls}
         className={`absolute top-0 left-0 right-0 z-20 px-4 pt-3 pb-8 sm:px-6 sm:pt-4 sm:pb-10 bg-gradient-to-b from-[#0f0f10]/95 via-[#0f0f10]/75 to-transparent flex flex-wrap items-center justify-between gap-3 transition-[opacity,transform] duration-200 ease-cinema ${
-          hideTopBar ? 'opacity-0 -translate-y-2 pointer-events-none' : 'opacity-100 translate-y-0'
+          hideControls ? 'opacity-0 -translate-y-2 pointer-events-none' : 'opacity-100 translate-y-0'
         }`}
       >
         <div className="flex items-center gap-3 min-w-0">
@@ -876,20 +1116,42 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
         </div>
       </div>
 
-      {/* Main HTML5 Video Element */}
+      {/* Main HTML5 Video Element（關閉原生 controls，由 PiStream 自訂底部控制列，避免右下角重複顯示 CC 與全螢幕圖示） */}
       <video
         ref={videoRef}
-        controls
         playsInline
+        onTouchStart={handleVideoTouchStart}
+        onClick={handleVideoClick}
+        onDoubleClick={handleVideoDoubleClick}
         style={{ '--pistream-cue-size': `${((1.05 * subtitleScale) / 100).toFixed(2)}em` } as React.CSSProperties}
         className="w-full h-full object-contain focus:outline-none"
+        onLoadedMetadata={() => {
+          const v = videoRef.current;
+          if (!v) return;
+          v.volume = volume;
+          v.muted = isMuted;
+          if (duration <= 0 && Number.isFinite(v.duration) && v.duration > 0) {
+            setDuration(v.duration);
+          }
+          syncBufferedRange(v);
+        }}
+        onProgress={() => syncBufferedRange(videoRef.current)}
         onTimeUpdate={() => {
           const v = videoRef.current;
           if (!v) return;
-          setCurrentTime(v.currentTime);
+          if (!isScrubbingRef.current) {
+            setCurrentTime(v.currentTime);
+          }
+          syncBufferedRange(v);
           if (!v.seeking && v.readyState >= 3 && v.currentTime > 0) {
             lastValidTimeRef.current = v.currentTime;
           }
+        }}
+        onVolumeChange={() => {
+          const v = videoRef.current;
+          if (!v) return;
+          setVolume(v.volume);
+          setIsMuted(v.muted);
         }}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
@@ -900,6 +1162,140 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
         onCanPlay={() => setSeeking(false)}
         onCanPlayThrough={() => setSeeking(false)}
       />
+
+      {/* Custom Bottom Control Bar（僅保留播放/暫停、進度條、時間與音量，不顯示右下角 CC 與全螢幕按鈕） */}
+      {!error && (
+        <div
+          onMouseEnter={() => {
+            hoveringBottomBarRef.current = true;
+            clearHideTimer();
+            setControlsVisible(true);
+          }}
+          onMouseLeave={() => {
+            hoveringBottomBarRef.current = false;
+            setHoverTime(null);
+            scheduleAutoHide();
+          }}
+          onTouchStart={revealControls}
+          onClick={(e) => e.stopPropagation()}
+          className={`absolute bottom-0 left-0 right-0 z-20 px-4 pt-10 pb-3 sm:px-6 sm:pb-4 bg-gradient-to-t from-[#0f0f10]/95 via-[#0f0f10]/75 to-transparent transition-[opacity,transform] duration-200 ease-cinema ${
+            hideControls ? 'opacity-0 translate-y-2 pointer-events-none' : 'opacity-100 translate-y-0'
+          }`}
+        >
+          {/* Interactive Timeline / Seek Bar */}
+          <div
+            ref={seekBarRef}
+            role="slider"
+            tabIndex={0}
+            aria-label="播放進度"
+            aria-valuemin={0}
+            aria-valuemax={Math.round(effectiveDuration)}
+            aria-valuenow={Math.round(displayTime)}
+            aria-valuetext={`${formatDuration(displayTime)} / ${formatDuration(effectiveDuration)}`}
+            onPointerDown={handleSeekPointerDown}
+            onPointerMove={handleSeekPointerMove}
+            onPointerUp={handleSeekPointerUp}
+            onPointerCancel={handleSeekPointerCancel}
+            onPointerLeave={() => {
+              if (!isScrubbingRef.current) setHoverTime(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.code === 'Home') {
+                e.preventDefault();
+                seekTo(0);
+              } else if (e.code === 'End') {
+                e.preventDefault();
+                seekTo(effectiveDuration);
+              }
+            }}
+            className="relative h-5 flex items-center cursor-pointer touch-none group mb-2 cinema-focus rounded"
+          >
+            {hoverTime !== null && effectiveDuration > 0 && (
+              <div
+                style={{ left: `${Math.max(4, Math.min(96, hoverPct))}%` }}
+                className="absolute -top-7 -translate-x-1/2 px-2 py-0.5 rounded bg-[#0f0f10]/95 border border-border-strong text-[11px] font-mono tabular-nums text-ink-primary pointer-events-none whitespace-nowrap shadow-lg"
+              >
+                {formatDuration(hoverTime)}
+              </div>
+            )}
+
+            <div className="relative w-full h-1.5 group-hover:h-2 transition-[height] duration-150 ease-cinema rounded-full bg-white/20 overflow-hidden">
+              <div
+                style={{ width: `${bufferedPct}%` }}
+                className="absolute inset-y-0 left-0 bg-white/30 rounded-full"
+              />
+              <div
+                style={{ width: `${progressPct}%` }}
+                className="absolute inset-y-0 left-0 bg-accent rounded-full"
+              />
+            </div>
+
+            <div
+              style={{ left: `${progressPct}%` }}
+              className={`absolute top-1/2 -translate-x-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full bg-accent border-2 border-white shadow transition-transform duration-150 ease-cinema pointer-events-none ${
+                scrubTime !== null ? 'scale-110 opacity-100' : 'scale-0 group-hover:scale-100 opacity-0 group-hover:opacity-100'
+              }`}
+            />
+          </div>
+
+          {/* Bottom Controls Row: Play/Pause, Time, Volume (NO CC / NO Fullscreen) */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <button
+                type="button"
+                onClick={togglePlayPause}
+                className="w-9 h-9 rounded-lg bg-surface/95 hover:bg-raised text-ink-primary flex items-center justify-center border border-border flex-none cinema-focus transition-colors duration-150 ease-cinema"
+                title={isPlaying ? '暫停（Space）' : '播放（Space）'}
+                aria-label={isPlaying ? '暫停' : '播放'}
+              >
+                {isPlaying ? (
+                  <Pause size={16} strokeWidth={1.75} className="fill-current" />
+                ) : (
+                  <Play size={16} strokeWidth={1.75} className="fill-current translate-x-[1px]" />
+                )}
+              </button>
+
+              <div className="text-xs sm:text-sm font-mono tabular-nums text-ink-primary whitespace-nowrap">
+                <span>{formatDuration(displayTime)}</span>
+                <span className="text-ink-muted mx-1.5">/</span>
+                <span className="text-ink-secondary">{formatDuration(effectiveDuration)}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 flex-none">
+              <button
+                type="button"
+                onClick={toggleMute}
+                className="w-8 h-8 rounded-lg bg-surface/95 hover:bg-raised text-ink-secondary hover:text-ink-primary flex items-center justify-center border border-border cinema-focus transition-colors duration-150 ease-cinema"
+                title={effectiveVolume === 0 ? '取消靜音（M）' : '靜音（M）'}
+                aria-label={effectiveVolume === 0 ? '取消靜音' : '靜音'}
+              >
+                {effectiveVolume === 0 ? (
+                  <VolumeX size={15} strokeWidth={1.6} />
+                ) : effectiveVolume < 0.5 ? (
+                  <Volume1 size={15} strokeWidth={1.6} />
+                ) : (
+                  <Volume2 size={15} strokeWidth={1.6} />
+                )}
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.02}
+                value={effectiveVolume}
+                onChange={(e) => applyVolume(Number(e.target.value))}
+                aria-label="音量"
+                title={`音量：${volumePct}%`}
+                style={{
+                  background: `linear-gradient(to right, #e2a336 0%, #e2a336 ${volumePct}%, rgba(255, 255, 255, 0.22) ${volumePct}%, rgba(255, 255, 255, 0.22) 100%)`,
+                }}
+                className="cinema-range w-20 sm:w-24"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Seeking / Loading Spinner */}
       {(loading || seeking) && !error && (
