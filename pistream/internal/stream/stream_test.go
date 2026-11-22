@@ -439,3 +439,67 @@ func TestHLSManagerSecurityBoundaries(t *testing.T) {
 		t.Fatalf("預期超過全域上限時回傳 ErrTooManySessions，實際: %v", err)
 	}
 }
+
+func TestHLSManagerAdjacentSeekReuse(t *testing.T) {
+	tempDir := t.TempDir()
+	mgr := NewHLSManager(&config.Config{
+		TranscodeTempDir: tempDir,
+		SegmentDuration:  4,
+		MaxKeepSegments:  10,
+	})
+
+	media := &db.MediaFile{
+		ID:              99,
+		FilePath:        filepath.Join(tempDir, "nonexistent_remux.mkv"),
+		DurationSeconds: 4000,
+	}
+
+	sess, err := mgr.getOrCreateSession(1, "sess_adj_seek", media, "remux", "original", 0)
+	if err != nil {
+		t.Fatalf("建立 Session 失敗: %v", err)
+	}
+
+	// 模擬 FFmpeg 剛於 Seg=820 啟動且已完成寫出 seg_00820.ts、seg_00821.ts，正在寫 seg_00822.ts
+	runningDone := make(chan struct{})
+	defer close(runningDone)
+	sess.StartSeg = 820
+	sess.CurrentHeadSeg = 820
+	sess.LastSeekSeq = "7"
+	sess.ProcessDone = runningDone
+
+	for _, name := range []string{"seg_00820.ts", "seg_00821.ts", "seg_00822.ts"} {
+		if err := os.WriteFile(filepath.Join(sess.OutputDir, name), []byte("ts-payload"), 0644); err != nil {
+			t.Fatalf("寫入測試切片 %s 失敗: %v", name, err)
+		}
+	}
+
+	// 1. 緊鄰切片 Seg=821 且 seekSeq 變更 ("7" -> "8")：必須直接沿用現有切片，不得清除目錄或重啟 FFmpeg
+	gotPath, err := mgr.EnsureSegmentReady(context.Background(), 1, "sess_adj_seek", media, "remux", "original", 0, 821, "8")
+	if err != nil {
+		t.Fatalf("預期直接沿用緊鄰切片 seg_00821.ts，實際錯誤: %v", err)
+	}
+	if filepath.Base(gotPath) != "seg_00821.ts" {
+		t.Fatalf("預期回傳 seg_00821.ts，實際: %s", gotPath)
+	}
+	if sess.LastSeekSeq != "8" || sess.StartSeg != 820 || sess.CurrentHeadSeg != 821 {
+		t.Fatalf("沿用緊鄰切片後 Session 狀態異常: StartSeg=%d Head=%d LastSeekSeq=%q", sess.StartSeg, sess.CurrentHeadSeg, sess.LastSeekSeq)
+	}
+
+	// 2. 遠距離跳轉（往前 Seg=560、往後 Seg=825，或離起點超過 2 片 Seg=823）不得誤沿用
+	seg560 := filepath.Join(sess.OutputDir, "seg_00560.ts")
+	seg561 := filepath.Join(sess.OutputDir, "seg_00561.ts")
+	if canReuseAdjacentSeekLocked(sess, 560, seg560, seg561) {
+		t.Fatalf("往回遠距跳轉 Seg=560 不應沿用 StartSeg=820 的行程")
+	}
+	seg825 := filepath.Join(sess.OutputDir, "seg_00825.ts")
+	seg826 := filepath.Join(sess.OutputDir, "seg_00826.ts")
+	if canReuseAdjacentSeekLocked(sess, 825, seg825, seg826) {
+		t.Fatalf("往前跨多片跳轉 Seg=825 不應沿用 StartSeg=820 的行程")
+	}
+	sess.CurrentHeadSeg = 822
+	seg823 := filepath.Join(sess.OutputDir, "seg_00823.ts")
+	seg824 := filepath.Join(sess.OutputDir, "seg_00824.ts")
+	if canReuseAdjacentSeekLocked(sess, 823, seg823, seg824) {
+		t.Fatalf("距離 StartSeg 超過 2 片 (823-820=3) 時應允許重新定位 FFmpeg")
+	}
+}

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.2
+
+- **Fixed Remux Timeline Seek A/V Desync & Screen Jump**:
+  - In `web/src/components/VideoPlayer.tsx`, reset `hls.js`'s `streamController` transmuxer (`resetTransmuxer()` and `fragPrevious = null`, preserving `initPTS` and pre-seeding `initPTS=0` on early seeks) on every out-of-buffer timeline seek so `MP4Remuxer.remuxVideo()` never misclassifies a post-restart adjacent segment (`snDiff === 1`) as contiguous and permanently shifts video frames one GOP behind audio & subtitles.
+  - Guarded `onVideoSeeking` against internal buffer-gap / stall nudges (`FRAG_BUFFERED`, `BUFFER_STALLED_ERROR`, `BUFFER_NUDGE_ON_STALL`) and replaced hardcoded `4s` grid resets with `details.targetduration || 4`.
+  - In `internal/stream/hls_manager.go`, tracked `StartSeg` on `HLSSession` so adjacent segment requests immediately following a seek (e.g. `Seg=820 -> Seg=821`) reuse the already-running contiguous FFmpeg process instead of restarting FFmpeg and backtracking to the same keyframe (eliminating the screen jump), with unit tests in `stream_test.go`.
+- **Custom Bottom Player Controls (Removed Duplicate Bottom-Right CC & Fullscreen Icons)**:
+  - Replaced native `<video controls>` with a PiStream Cinema-styled custom bottom control bar containing Play/Pause, drag-scrub timeline with buffered indicator and hover timestamp preview (committing seek once on release), true media duration display, and persistent Mute/Volume controls — removing the duplicate bottom-right `CC` and fullscreen icons across Firefox, Chrome, Edge, and Safari while keeping all subtitle & fullscreen controls in the top bar (plus click-to-play/pause, double-click fullscreen, touch control toggle, and iOS fullscreen fallback).
+
 ## 1.0.1
 
 - Fixed intermittent CJK subtitle glyph corruption / garbled characters at large subtitle scales (e.g. `180%`) on Windows Firefox WebRender by switching `video::cue` in `web/src/index.css` from Google Fonts' 124-slice remote `Noto Sans TC` WOFF2 webfont to a single local native OS CJK system font stack (`"Microsoft JhengHei"`, `"PingFang TC"`, `"Microsoft YaHei"`, `"PingFang SC"`, `"Noto Sans CJK TC"`, `system-ui, sans-serif`), setting explicit regular `font-weight: 400`, and resetting inherited `font-feature-settings: normal`.
