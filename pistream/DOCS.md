@@ -6,9 +6,15 @@ This app packages [`s90061/pistream`](https://github.com/s90061/pistream) (`aarc
 
 ## Three-Tier Streaming Engine
 
-1. **Tier 1 — Direct Play (`direct`, HTTP 206 Byte-Range)**: Zero CPU usage and `<100ms` seeking for browser-compatible MP4 / WebM / MOV files (H.264 / VP9 / AV1, plus HEVC on hardware-capable browsers).
-2. **Tier 2 — Zero-Copy Remux (`remux`, `-c:v copy -c:a aac`)**: Repackages MKV H.264 or multi-channel AC3/DTS audio into HLS on the fly with Input Keyframe Seeking (`>50x` realtime on Raspberry Pi 5).
-3. **Tier 3 — Bandwidth-Adaptive Transcoding (`transcode`)**: Switch between **Original**, **1080p**, and **720p** with sliding-window segment cleanup (`max_keep_segments`).
+1. **Tier 1 — Direct Play (`direct`, HTTP 206 Byte-Range)**: Zero CPU usage and `<100ms` seeking for browser-compatible MP4 / WebM / MOV files (H.264 / VP9 / AV1, plus HEVC and native Dolby Digital Plus `EAC3` on hardware-capable browsers).
+2. **Tier 2 — Zero-Copy Remux (`remux`, `-c:v copy -c:a aac`)**: Repackages MKV or HEVC + AC3/EAC3/DTS audio into HLS on the fly with Input Keyframe Seeking (`>50x` realtime, ~1–3% Pi 5 CPU) and Smart 1080p Bypass (`<= 1080p` and `<= 8 Mbps`).
+3. **Tier 3 — Hardware-Decoded Adaptive Transcoding (`transcode`)**: Switch between **Original**, **1080p**, and **720p** using Raspberry Pi 5's built-in 4Kp60 8/10-bit HEVC hardware decoder (`rpi-hevc-dec` via V4L2-request DRM + BCM2712 IOMMU MMap, with automatic CPU fallback), burst + paced `1.2x` readrate throttling, `SIGSTOP`/`SIGCONT` ahead-buffer pausing, sliding-window segment cleanup (`max_keep_segments`), and instant FFmpeg termination when closing the player.
+
+## Security Architecture
+
+* **Pure `HttpOnly` Cookie Authentication**: No query `?token=` or `Bearer` token endpoints; internal HMAC-SHA256 signing key is automatically generated and persisted in `/config/.jwt_secret` (`chmod 600`).
+* **Immediate Server-Side Session Revocation**: Deleting an account, changing/resetting passwords, or logging out immediately invalidates active sessions via SQLite `token_version`.
+* **Defense in Depth**: Sliding-window login brute-force rate limiting (`429`), strict `sessionID` validation & per-user session ownership, HLS concurrency limits, HA Ingress-compatible CSP (`frame-ancestors 'self'`) and same-origin CSRF checks, and admin-only library scanning.
 
 ## Accessing PiStream
 
@@ -36,3 +42,4 @@ This app packages [`s90061/pistream`](https://github.com/s90061/pistream) (`aarc
 | `segment_duration` | `int(2,10)` | `4` | HLS segment duration in seconds (`SEGMENT_DURATION`). |
 | `max_keep_segments` | `int(4,60)` | `10` | Sliding-window segments kept behind playhead (`MAX_KEEP_SEGMENTS`). |
 | `transcode_storage` | `list(auto\|shm\|tmp)` | `auto` | HLS buffer location (`auto`, `shm` for `/dev/shm`, or `tmp` for `/tmp`). |
+| `hw_hevc_decode` | `bool` | `true` | Enable Raspberry Pi 5 V4L2-request / DRM hardware HEVC decoding (`rpi-hevc-dec`, auto-falls back to CPU if unavailable). |
