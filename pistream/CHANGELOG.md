@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.11
+
+- **Allow All Authenticated Users to Trigger Library Scan**:
+  - Displayed the top-right **`↻ 掃描`** refresh/scan button in `web/src/components/Navbar.tsx` for all logged-in users (not just administrators).
+  - Updated `POST /api/library/scan` in `internal/api/router.go` from `requireAdmin` to `requireAuth` (retaining single-flight `scanRunning` concurrency protection and same-origin CSRF enforcement, while keeping `/api/admin/*` strictly admin-only).
+
 ## 1.0.10
 
 - **3–10× Faster Background Thumbnail Generation & Stall Protection**:

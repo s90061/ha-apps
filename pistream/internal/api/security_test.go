@@ -281,15 +281,13 @@ func TestSecurityCSRFHeadersTraversalAndInfoLeak(t *testing.T) {
 		t.Fatalf("非法 mode 應回傳 400，實際: %d", m3u8InjRec.Code)
 	}
 
-	// 5. 一般使用者呼叫 POST /api/library/scan 應回傳 403；管理員才可呼叫
-	scanBobReq := httptest.NewRequest(http.MethodPost, "http://pistream.local:8080/api/library/scan", nil)
-	scanBobReq.Host = "pistream.local:8080"
-	scanBobReq.Header.Set("Origin", "http://pistream.local:8080")
-	scanBobReq.AddCookie(bobCookie)
-	scanBobRec := httptest.NewRecorder()
-	handler.ServeHTTP(scanBobRec, scanBobReq)
-	if scanBobRec.Code != http.StatusForbidden {
-		t.Fatalf("非管理員呼叫 /api/library/scan 應回傳 403，實際: %d", scanBobRec.Code)
+	// 5. 管理員專用端點（/api/admin/users）對非管理員仍應回傳 403
+	adminUsersBobReq := httptest.NewRequest(http.MethodGet, "http://pistream.local:8080/api/admin/users", nil)
+	adminUsersBobReq.AddCookie(bobCookie)
+	adminUsersBobRec := httptest.NewRecorder()
+	handler.ServeHTTP(adminUsersBobRec, adminUsersBobReq)
+	if adminUsersBobRec.Code != http.StatusForbidden {
+		t.Fatalf("非管理員呼叫 /api/admin/users 應回傳 403，實際: %d", adminUsersBobRec.Code)
 	}
 
 	// 6. API 回應不得外露內部伺服器 file_path
@@ -350,5 +348,25 @@ func TestSecurityCSRFHeadersTraversalAndInfoLeak(t *testing.T) {
 	}
 	if err := json.Unmarshal(transRec.Body.Bytes(), &transResp); err != nil || transResp.Decision.Mode != "transcode" || transResp.Decision.Quality != "1080p" {
 		t.Fatalf("預期 force_transcode=1 回傳 1080p transcode，實際: %+v err=%v", transResp.Decision, err)
+	}
+
+	// 10. 未登入呼叫 POST /api/library/scan 應回傳 401；已登入一般使用者可觸發掃描（置於最後以免掃空假資料）
+	scanAnonReq := httptest.NewRequest(http.MethodPost, "http://pistream.local:8080/api/library/scan", nil)
+	scanAnonReq.Host = "pistream.local:8080"
+	scanAnonReq.Header.Set("Origin", "http://pistream.local:8080")
+	scanAnonRec := httptest.NewRecorder()
+	handler.ServeHTTP(scanAnonRec, scanAnonReq)
+	if scanAnonRec.Code != http.StatusUnauthorized {
+		t.Fatalf("未登入呼叫 /api/library/scan 應回傳 401，實際: %d", scanAnonRec.Code)
+	}
+
+	scanBobReq := httptest.NewRequest(http.MethodPost, "http://pistream.local:8080/api/library/scan", nil)
+	scanBobReq.Host = "pistream.local:8080"
+	scanBobReq.Header.Set("Origin", "http://pistream.local:8080")
+	scanBobReq.AddCookie(bobCookie)
+	scanBobRec := httptest.NewRecorder()
+	handler.ServeHTTP(scanBobRec, scanBobReq)
+	if scanBobRec.Code != http.StatusOK {
+		t.Fatalf("已登入一般使用者呼叫 /api/library/scan 應回傳 200，實際: %d", scanBobRec.Code)
 	}
 }

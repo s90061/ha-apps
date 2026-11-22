@@ -306,7 +306,7 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 		writeJSON(w, http.StatusOK, items)
 	}))
 
-	mux.HandleFunc("POST /api/library/scan", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/library/scan", requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		if !scanRunning.CompareAndSwap(false, true) {
 			writeJSON(w, http.StatusOK, map[string]string{"status": "already_scanning"})
 			return
