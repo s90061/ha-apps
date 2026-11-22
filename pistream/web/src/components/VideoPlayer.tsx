@@ -79,7 +79,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
   const [reloadKey, setReloadKey] = useState(0);
 
   const [quality, setQuality] = useState<'original' | '1080p' | '720p'>('original');
-  const [forceH264, setForceH264] = useState(false);
+  const [forceRemux, setForceRemux] = useState(false);
+  const [forceTranscode, setForceTranscode] = useState(false);
   const [audioTracks, setAudioTracks] = useState<AudioTrack[]>([]);
   const [selectedAudio, setSelectedAudio] = useState<number>(0);
 
@@ -276,18 +277,28 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     video.muted = isMuted;
   }, []);
 
-  // 1. 取得串流決策（初次進入或切換畫質/音軌時觸發）
+  // 1. 取得串流決策（初次進入或切換畫質/音軌/三段式降級時觸發）
   useEffect(() => {
     let isMounted = true;
-    const allowHEVCDirect = detectHEVCDirectSupport() && !forceH264;
-    const allowHEVCHls = detectHEVCHlsSupport() && !forceH264;
-    const allowEAC3 = detectEAC3Support();
+    const allowHEVCDirect = detectHEVCDirectSupport() && !forceTranscode;
+    const allowHEVCHls = detectHEVCHlsSupport() && !forceTranscode;
+    const allowEAC3 = detectEAC3Support() && !forceTranscode;
 
     setLoading(true);
     setError(null);
 
     api
-      .getStreamInfo(fileId, sessionRef.current, quality, selectedAudio, allowHEVCDirect, allowHEVCHls, allowEAC3)
+      .getStreamInfo(
+        fileId,
+        sessionRef.current,
+        quality,
+        selectedAudio,
+        allowHEVCDirect,
+        allowHEVCHls,
+        allowEAC3,
+        forceRemux,
+        forceTranscode,
+      )
       .then((info) => {
         if (!isMounted) return;
         setStreamInfo(info);
@@ -316,7 +327,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     return () => {
       isMounted = false;
     };
-  }, [fileId, quality, selectedAudio, forceH264, reloadKey]);
+  }, [fileId, quality, selectedAudio, forceRemux, forceTranscode, reloadKey]);
 
   // 2. 初始化播放器 (Direct Play HTTP 206 vs HLS 切片串流)
   useEffect(() => {
@@ -345,14 +356,90 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     let cleanupSeekingListener: (() => void) | null = null;
 
     if (decision.mode === 'direct') {
-      video.src = streamUrl;
+      let directFallbackTriggered = false;
+      const triggerDirectFallback = () => {
+        if (directFallbackTriggered) return;
+        directFallbackTriggered = true;
+        window.clearInterval(stallCheckTimer);
+        video.removeEventListener('error', onDirectError);
+        video.removeEventListener('loadedmetadata', onLoaded);
+
+        const resumeAt = video.currentTime > 1 ? video.currentTime : lastValidTimeRef.current;
+        if (resumeAt > 1) {
+          savedTimeRef.current = resumeAt;
+        }
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        setSeeking(false);
+
+        // 三段式降級：Direct Play 失敗／卡死 -> 若瀏覽器支援 HLS 換殼則優先自動改走原畫 Remux（1~3% CPU、零畫質損失）；
+        // 否則直接降級至 1080p H.264 兼容轉碼（跳過 Smart 1080p Bypass）。
+        const codec = media.video_codec.toLowerCase();
+        const canTryRemux =
+          !forceRemux &&
+          (codec === 'h264' ||
+            codec === 'avc1' ||
+            ((codec === 'hevc' || codec === 'h265') && detectHEVCHlsSupport()));
+        if (canTryRemux) {
+          setForceRemux(true);
+        } else {
+          setForceRemux(false);
+          setForceTranscode(true);
+          setQuality('1080p');
+        }
+      };
+
+      const onDirectError = () => {
+        const errCode = video.error?.code;
+        // MEDIA_ERR_DECODE (3) 或 MEDIA_ERR_SRC_NOT_SUPPORTED (4)：瀏覽器解碼器／MP4 解封裝器拒收，立即秒切 Remux／轉碼
+        if (errCode === 3 || errCode === 4 || !errCode) {
+          triggerDirectFallback();
+          return;
+        }
+        setSeeking(false);
+        setError('直連串流連線中斷，可回到上次播放位置或切換為 1080p 兼容轉碼');
+      };
+
+      // 卡頓守門員：若處於播放中且未拋出 error，但畫面時間連續停滯（readyState>=1 超過 6 秒或起播超過 12 秒）則自動降級
+      let lastProgressTime = -1;
+      let stalledSince = 0;
+      const stallCheckTimer = window.setInterval(() => {
+        if (directFallbackTriggered || video.paused || video.ended) {
+          stalledSince = 0;
+          lastProgressTime = video.currentTime;
+          return;
+        }
+        const cur = video.currentTime;
+        if (lastProgressTime >= 0 && Math.abs(cur - lastProgressTime) < 0.05) {
+          const stallLimitMs = video.readyState >= 1 ? 6000 : 12000;
+          if (stalledSince === 0) {
+            stalledSince = Date.now();
+          } else if (Date.now() - stalledSince >= stallLimitMs) {
+            triggerDirectFallback();
+          }
+        } else {
+          lastProgressTime = cur;
+          stalledSince = 0;
+        }
+      }, 1000);
+
       const onLoaded = () => {
         if (targetStartSec > 0) {
           video.currentTime = targetStartSec;
         }
         video.play().catch(() => {});
       };
+
+      video.addEventListener('error', onDirectError);
       video.addEventListener('loadedmetadata', onLoaded, { once: true });
+      video.src = streamUrl;
+
+      cleanupSeekingListener = () => {
+        window.clearInterval(stallCheckTimer);
+        video.removeEventListener('error', onDirectError);
+        video.removeEventListener('loadedmetadata', onLoaded);
+      };
     } else if (Hls.isSupported()) {
       // 重要：初始化時固定由 startPosition: 0 先載入 seg_00000.ts，確保 hls.js MP4Remuxer 的 _initPTS 鎖定為 0.000s；
       // 待首個切片載入完成後，再於 FRAG_BUFFERED 立即跳轉至 targetStartSec，徹底消除續播時因關鍵幀時間差造成的 initPTS 偏移。
@@ -622,22 +709,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
               // 預鎖 initPTS=0 並重設 Transmuxer，確保重載後畫面、聲音與字幕精準同步。
               resetFragmentsForOutBufferSeek();
               hls.recoverMediaError();
-            } else if (
-              !forceH264 &&
-              decision.mode === 'remux' &&
-              (media.video_codec.toLowerCase() === 'hevc' || media.video_codec.toLowerCase() === 'h265')
-            ) {
-              if (video.currentTime > 1) {
-                savedTimeRef.current = video.currentTime;
+            } else if (!forceTranscode && decision.mode === 'remux') {
+              const resumeAt = video.currentTime > 1 ? video.currentTime : lastValidTimeRef.current;
+              if (resumeAt > 1) {
+                savedTimeRef.current = resumeAt;
               }
               hls.destroy();
-              setForceH264(true);
+              setForceRemux(false);
+              setForceTranscode(true);
               setQuality('1080p');
               return;
             } else {
               hls.destroy();
               setSeeking(false);
-              setError('串流解碼失敗，請嘗試切換畫質為 1080p 或 720p');
+              setError('串流解碼失敗，請嘗試切換畫質為 1080p 兼容轉碼或 720p');
             }
             break;
           default:
@@ -746,11 +831,27 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
   };
 
   // 5. 切換畫質或音軌時保留當前播放秒數
-  const handleQualityChange = (newQuality: 'original' | '1080p' | '720p') => {
-    if (videoRef.current && videoRef.current.currentTime > 1) {
-      savedTimeRef.current = videoRef.current.currentTime;
+  type QualityChoice = 'original' | '1080p' | '1080p_compat' | '720p';
+  const qualitySelectValue: QualityChoice = quality === '1080p' && forceTranscode ? '1080p_compat' : quality;
+
+  const handleQualityChange = (choice: QualityChoice) => {
+    const resumeAt =
+      videoRef.current && videoRef.current.currentTime > 1
+        ? videoRef.current.currentTime
+        : lastValidTimeRef.current;
+    if (resumeAt > 1) {
+      savedTimeRef.current = resumeAt;
     }
-    setQuality(newQuality);
+    setError(null);
+    if (choice === '1080p_compat') {
+      setForceRemux(false);
+      setForceTranscode(true);
+      setQuality('1080p');
+      return;
+    }
+    setForceRemux(false);
+    setForceTranscode(false);
+    setQuality(choice);
   };
 
   const handleAudioChange = (newAudioIdx: number) => {
@@ -1204,14 +1305,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
           {/* 畫質/頻寬選擇 */}
           <CinemaSelect
             ariaLabel="畫質設定"
-            value={quality}
+            value={qualitySelectValue}
             onChange={(v) => handleQualityChange(v)}
             options={[
               { value: 'original', label: '畫質：原畫' },
               { value: '1080p', label: '畫質：1080p（4 Mbps）' },
+              { value: '1080p_compat', label: '畫質：1080p 兼容轉碼' },
               { value: '720p', label: '畫質：720p（2 Mbps）' },
             ]}
-            maxWidthClass="max-w-[170px]"
+            maxWidthClass="max-w-[185px]"
           />
 
           {/* 多音軌選擇 */}
@@ -1545,13 +1647,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
                 回到上次位置（{formatDuration(lastValidTimeRef.current)}）
               </button>
             )}
-            {(quality === 'original' || !forceH264) && (
+            {!forceTranscode && (
               <button
                 type="button"
-                onClick={() => {
-                  setForceH264(true);
-                  handleQualityChange('1080p');
-                }}
+                onClick={() => handleQualityChange('1080p_compat')}
                 className="h-9 px-4 rounded-lg bg-raised hover:bg-hover text-ink-primary font-medium text-xs border border-border-strong"
               >
                 切換為 1080p 兼容轉碼

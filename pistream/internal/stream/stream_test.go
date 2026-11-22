@@ -160,6 +160,67 @@ func TestDecideStreamMode(t *testing.T) {
 	if res10Direct.Mode != "direct" {
 		t.Fatalf("預期 4K HEVC + EAC3 MP4 在支援 EAC3 的瀏覽器走 direct，實際為 %s", res10Direct.Mode)
 	}
+
+	// 11. 三段式降級：1080p HEVC + AAC MP4 (<= 8 Mbps)
+	//     - 預設走 direct
+	//     - ForceRemux=true (例如 Firefox 原生 MP4 解封裝報 MEDIA_ERR_DECODE) -> 優先改走免重編碼 remux
+	//     - ForceRemux=true 且瀏覽器不支援 HEVC HLS -> 回退 transcode
+	//     - ForceTranscode=true (即使品質為 original 或 1080p，或來源為低碼率 H.264) -> 強制走 1080p transcode，不被 Smart 1080p Bypass 攔截
+	mp4HEVC1080p := &db.MediaFile{
+		ID:         12,
+		Container:  "mp4",
+		VideoCodec: "hevc",
+		AudioCodec: "aac",
+		Width:      1920,
+		Height:     1080,
+		BitRate:    5_000_000,
+	}
+	res11Default := DecideStreamModeWithOptions(mp4HEVC1080p, "sess1", "original", 0, StreamCaps{
+		AllowHEVCDirect: true,
+		AllowHEVCHLS:    true,
+	})
+	if res11Default.Mode != "direct" {
+		t.Fatalf("預期 1080p HEVC+AAC MP4 預設走 direct，實際為 %s", res11Default.Mode)
+	}
+	res11ForceRemux := DecideStreamModeWithOptions(mp4HEVC1080p, "sess1", "original", 0, StreamCaps{
+		AllowHEVCDirect: true,
+		AllowHEVCHLS:    true,
+		ForceRemux:      true,
+	})
+	if res11ForceRemux.Mode != "remux" || res11ForceRemux.Quality != "original" {
+		t.Fatalf("預期 ForceRemux 跳過 direct 改走原畫 remux，實際為 %+v", res11ForceRemux)
+	}
+	res11ForceRemuxNoHlsHevc := DecideStreamModeWithOptions(mp4HEVC1080p, "sess1", "original", 0, StreamCaps{
+		AllowHEVCDirect: true,
+		AllowHEVCHLS:    false,
+		ForceRemux:      true,
+	})
+	if res11ForceRemuxNoHlsHevc.Mode != "transcode" {
+		t.Fatalf("預期不支援 HEVC HLS 時 ForceRemux 自動回退 transcode，實際為 %+v", res11ForceRemuxNoHlsHevc)
+	}
+	res11ForceTrans := DecideStreamModeWithOptions(mp4HEVC1080p, "sess1", "1080p", 0, StreamCaps{
+		AllowHEVCDirect: true,
+		AllowHEVCHLS:    true,
+		ForceTranscode:  true,
+	})
+	if res11ForceTrans.Mode != "transcode" || res11ForceTrans.Quality != "1080p" {
+		t.Fatalf("預期 ForceTranscode 跳過 Smart 1080p Bypass 強制走 1080p transcode，實際為 %+v", res11ForceTrans)
+	}
+	mp4H264Low := &db.MediaFile{
+		ID:         13,
+		Container:  "mp4",
+		VideoCodec: "h264",
+		AudioCodec: "aac",
+		Width:      1920,
+		Height:     1080,
+		BitRate:    4_000_000,
+	}
+	res11H264ForceTrans := DecideStreamModeWithOptions(mp4H264Low, "sess1", "1080p", 0, StreamCaps{
+		ForceTranscode: true,
+	})
+	if res11H264ForceTrans.Mode != "transcode" || res11H264ForceTrans.Quality != "1080p" {
+		t.Fatalf("預期 H.264 1080p 在 ForceTranscode=true 時不得被 Smart 1080p Bypass 攔截，實際為 %+v", res11H264ForceTrans)
+	}
 }
 
 func TestBuildFFmpegArgsSeekAndOffset(t *testing.T) {

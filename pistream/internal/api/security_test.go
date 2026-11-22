@@ -328,4 +328,27 @@ func TestSecurityCSRFHeadersTraversalAndInfoLeak(t *testing.T) {
 	if bufSec, ok := infoResp["buffer_seconds"].(float64); !ok || int(bufSec) != config.DefaultBufferSeconds {
 		t.Fatalf("預期 buffer_seconds=%d，實際: %v", config.DefaultBufferSeconds, infoResp["buffer_seconds"])
 	}
+
+	// 9. /api/stream/{id}/info 的 force_remux 與 force_transcode 參數應正確生效
+	remuxReq := httptest.NewRequest(http.MethodGet, "http://pistream.local:8080/api/stream/1/info?session=sess_fr&hevc=1&hevc_hls=1&force_remux=1", nil)
+	remuxReq.AddCookie(adminCookie)
+	remuxRec := httptest.NewRecorder()
+	handler.ServeHTTP(remuxRec, remuxReq)
+	var remuxResp struct {
+		Decision stream.DecisionResult `json:"decision"`
+	}
+	if err := json.Unmarshal(remuxRec.Body.Bytes(), &remuxResp); err != nil || remuxResp.Decision.Mode != "remux" {
+		t.Fatalf("預期 force_remux=1 回傳 remux，實際: %+v err=%v", remuxResp.Decision, err)
+	}
+
+	transReq := httptest.NewRequest(http.MethodGet, "http://pistream.local:8080/api/stream/1/info?session=sess_ft&quality=1080p&hevc=1&hevc_hls=1&force_transcode=1", nil)
+	transReq.AddCookie(adminCookie)
+	transRec := httptest.NewRecorder()
+	handler.ServeHTTP(transRec, transReq)
+	var transResp struct {
+		Decision stream.DecisionResult `json:"decision"`
+	}
+	if err := json.Unmarshal(transRec.Body.Bytes(), &transResp); err != nil || transResp.Decision.Mode != "transcode" || transResp.Decision.Quality != "1080p" {
+		t.Fatalf("預期 force_transcode=1 回傳 1080p transcode，實際: %+v err=%v", transResp.Decision, err)
+	}
 }
