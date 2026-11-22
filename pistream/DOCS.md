@@ -14,7 +14,7 @@ This app packages [`s90061/pistream`](https://github.com/s90061/pistream) (`aarc
 
 * **Pure `HttpOnly` Cookie Authentication**: No query `?token=` or `Bearer` token endpoints; internal HMAC-SHA256 signing key is automatically generated and persisted in `/config/.jwt_secret` (`chmod 600`).
 * **Immediate Server-Side Session Revocation**: Deleting an account, changing/resetting passwords, or logging out immediately invalidates active sessions via SQLite `token_version`.
-* **Defense in Depth**: Sliding-window login brute-force rate limiting (`429`), strict `sessionID` validation & per-user session ownership, HLS concurrency limits, HA Ingress-compatible CSP (`frame-ancestors 'self'`) and same-origin CSRF checks, and admin-only library scanning.
+* **Defense in Depth**: Sliding-window login brute-force rate limiting (`429`), strict `sessionID` validation & per-user session ownership, HLS concurrency limits, HA Ingress-compatible CSP (`frame-ancestors 'self'`) and same-origin CSRF checks, single-flight authenticated library scanning, and admin-only user management.
 
 ## Accessing PiStream
 
