@@ -1,14 +1,18 @@
 package db
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 
 	"pistream/internal/auth"
 
-	_ "modernc.org/sqlite"
+	sqlite "modernc.org/sqlite"
 )
 
 type User struct {
@@ -73,7 +77,19 @@ type Store struct {
 	Conn *sql.DB
 }
 
+var registerSQLiteHookOnce sync.Once
+
+func ensureSQLitePragmasHook() {
+	registerSQLiteHookOnce.Do(func() {
+		sqlite.RegisterConnectionHook(func(conn sqlite.ExecQuerierContext, _ string) error {
+			_, err := conn.ExecContext(context.Background(), `PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;`, nil)
+			return err
+		})
+	})
+}
+
 func InitDB(dbPath string) (*Store, error) {
+	ensureSQLitePragmasHook()
 	conn, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("無法開啟資料庫: %w", err)
@@ -84,6 +100,12 @@ func InitDB(dbPath string) (*Store, error) {
 	PRAGMA synchronous = NORMAL;
 	PRAGMA foreign_keys = ON;
 	PRAGMA busy_timeout = 5000;
+
+	CREATE TABLE IF NOT EXISTS app_meta (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
 
 	CREATE TABLE IF NOT EXISTS users (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -137,6 +159,85 @@ func InitDB(dbPath string) (*Store, error) {
 	_, _ = conn.Exec(`ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1`)
 
 	return &Store{Conn: conn}, nil
+}
+
+func normalizeMediaDir(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(trimmed); err == nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Clean(trimmed)
+}
+
+// SyncMediaDir 檢查目前的媒體庫根目錄是否與上次啟動設定不同。
+// 首次建立紀錄時僅寫入目前路徑（保留既有資料以免升級誤刪）；
+// 若偵測到路徑變更，立即於單一交易內清空 playback_progress 與 media_files 並更新記錄路徑（保留 users 帳號表）。
+func (s *Store) SyncMediaDir(mediaDir string) (changed bool, prevDir string, clearedProgress int64, clearedMedia int64, err error) {
+	normDir := normalizeMediaDir(mediaDir)
+	if normDir == "" {
+		return false, "", 0, 0, nil
+	}
+
+	tx, err := s.Conn.Begin()
+	if err != nil {
+		return false, "", 0, 0, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	err = tx.QueryRow(`SELECT value FROM app_meta WHERE key = 'media_dir'`).Scan(&prevDir)
+	if errors.Is(err, sql.ErrNoRows) {
+		if _, err = tx.Exec(
+			`INSERT INTO app_meta (key, value, updated_at) VALUES ('media_dir', ?, CURRENT_TIMESTAMP)`,
+			normDir,
+		); err != nil {
+			return false, "", 0, 0, err
+		}
+		if err = tx.Commit(); err != nil {
+			return false, "", 0, 0, err
+		}
+		return false, "", 0, 0, nil
+	}
+	if err != nil {
+		return false, "", 0, 0, err
+	}
+
+	if normalizeMediaDir(prevDir) == normDir {
+		if err = tx.Commit(); err != nil {
+			return false, prevDir, 0, 0, err
+		}
+		return false, prevDir, 0, 0, nil
+	}
+
+	progRes, err := tx.Exec(`DELETE FROM playback_progress`)
+	if err != nil {
+		return false, prevDir, 0, 0, err
+	}
+	clearedProgress, _ = progRes.RowsAffected()
+
+	mediaRes, err := tx.Exec(`DELETE FROM media_files`)
+	if err != nil {
+		return false, prevDir, 0, 0, err
+	}
+	clearedMedia, _ = mediaRes.RowsAffected()
+
+	if _, err = tx.Exec(
+		`UPDATE app_meta SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'media_dir'`,
+		normDir,
+	); err != nil {
+		return false, prevDir, 0, 0, err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return false, prevDir, 0, 0, err
+	}
+	return true, prevDir, clearedProgress, clearedMedia, nil
 }
 
 // EnsureDefaultAdmin 確保系統至少存在一個管理員帳號；若設定 FORCE_ADMIN_PASSWORD=true 則同步更新該管理員密碼
