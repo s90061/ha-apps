@@ -602,3 +602,50 @@ func TestHLSManagerBufferWatermarks(t *testing.T) {
 		t.Fatalf("未顯式設定 BufferSeconds 時應套用預設 45s 水位 (6, 12)，實際 (%d, %d)", low, high)
 	}
 }
+
+func TestHLSManagerStopAndRecreateDirIsolation(t *testing.T) {
+	tempDir := t.TempDir()
+	mgr := NewHLSManager(&config.Config{
+		TranscodeTempDir: tempDir,
+		SegmentDuration:  4,
+		MaxKeepSegments:  10,
+	})
+	media := &db.MediaFile{
+		ID:              7794,
+		FilePath:        filepath.Join(tempDir, "movie.mp4"),
+		DurationSeconds: 120,
+	}
+
+	// 1. 建立第一個 Session (例如從 HLS 切回 Direct Play 前的舊行程)
+	sess1, err := mgr.getOrCreateSession(1, "sess_same_id", media, "transcode", "720p", 0)
+	if err != nil {
+		t.Fatalf("建立 sess1 失敗: %v", err)
+	}
+	dir1 := sess1.OutputDir
+
+	// 2. 模擬 StopSession(tombstone=false) 先從 map 移除 sess1，但在刪除 dir1 之前前端就以同一個 sessionID 觸發降級建立 sess2
+	mgr.mu.Lock()
+	delete(mgr.sessions, sess1.Key)
+	mgr.mu.Unlock()
+
+	sess2, err := mgr.getOrCreateSession(1, "sess_same_id", media, "transcode", "1080p", 0)
+	if err != nil {
+		t.Fatalf("建立 sess2 失敗: %v", err)
+	}
+	dir2 := sess2.OutputDir
+	if dir1 == dir2 {
+		t.Fatalf("同 sessionID 重建時必須分配獨立暫存目錄，否則併發回收會誤刪新目錄: %s", dir1)
+	}
+
+	// 3. 舊 sess1 延遲執行 terminateSessionLocked(sess1) 刪除 dir1：不得影響 sess2 的 dir2
+	sess1.mu.Lock()
+	mgr.terminateSessionLocked(sess1)
+	sess1.mu.Unlock()
+
+	if _, err := os.Stat(dir1); !os.IsNotExist(err) {
+		t.Fatalf("預期舊目錄 dir1 已被刪除，但仍存在: %v", err)
+	}
+	if _, err := os.Stat(dir2); err != nil {
+		t.Fatalf("預期新目錄 dir2 不受舊 Session 清理影響而保留，實際錯誤: %v", err)
+	}
+}
