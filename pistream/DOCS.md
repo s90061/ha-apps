@@ -33,7 +33,6 @@ This app packages [`s90061/pistream`](https://github.com/s90061/pistream) (`aarc
 | `media_dir` | `match(^/(media\|share\|config)(/.*)?$)` | `/media` | Media library root folder (`MEDIA_DIR`). |
 | `admin_user` | `str` | `admin` | Default administrator username (`ADMIN_USER`). |
 | `admin_password` | `password?` | _(unset)_ | Optional admin password override (`ADMIN_PASSWORD`). |
-| `jwt_secret` | `password?` | _(unset)_ | Optional token signing secret (`JWT_SECRET`, auto-persisted in `/config/.jwt_secret` if blank). |
 | `segment_duration` | `int(2,10)` | `4` | HLS segment duration in seconds (`SEGMENT_DURATION`). |
 | `max_keep_segments` | `int(4,60)` | `10` | Sliding-window segments kept behind playhead (`MAX_KEEP_SEGMENTS`). |
 | `transcode_storage` | `list(auto\|shm\|tmp)` | `auto` | HLS buffer location (`auto`, `shm` for `/dev/shm`, or `tmp` for `/tmp`). |

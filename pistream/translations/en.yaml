@@ -12,9 +12,6 @@ configuration:
   admin_password:
     name: Admin Password (Optional)
     description: Administrator login password (at least 4 characters). If left blank on first start, a random password is generated and printed in the app log; if set, it updates the admin password on startup.
-  jwt_secret:
-    name: JWT Signing Secret (Optional)
-    description: Secret key used to sign login tokens. Leave blank to auto-generate and persist in /config/.jwt_secret.
   segment_duration:
     name: HLS Segment Duration (Seconds)
     description: Duration in seconds of each HLS segment (default 4, range 2-10).

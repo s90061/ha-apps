@@ -12,9 +12,6 @@ configuration:
   admin_password:
     name: 管理員密碼（選填）
     description: 管理員登入密碼（至少 4 碼）。首次啟動若留空，系統會自動產生隨機密碼並印在日誌；若填寫則會在啟動時同步更新該管理員密碼。
-  jwt_secret:
-    name: 登入憑證簽章金鑰（選填）
-    description: 用於簽發登入 Token 的密鑰；留空會自動產生並持久化保存於 /config/.jwt_secret，重啟不會掉登入。
   segment_duration:
     name: HLS 切片秒數
     description: 每個 HLS 串流切片的秒數（預設 4 秒，範圍 2 至 10 秒）。
