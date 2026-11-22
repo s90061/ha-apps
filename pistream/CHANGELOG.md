@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.13
+
+- **Security Hardening**:
+  - Fixed path traversal and cross-user session interference in `HLSManager`: strictly allowlist `sessionID` (`^[A-Za-z0-9_-]{1,64}$`), scope sessions by owning user ID, and enforce subpath containment before `MkdirAll`/`RemoveAll`.
+  - Added immediate server-side session revocation (`token_version` in SQLite): deleting a user, resetting/changing passwords, or logging out immediately invalidates previous session cookies instead of remaining valid for 30 days, and `requireAuth`/`requireAdmin` always verify live DB state.
+  - Switched strictly to `HttpOnly` Cookie authentication: removed `?token=` query auth, `Authorization: Bearer` auth, and raw `token` exposure in the login JSON response; dynamically set `Secure` on cookies for HTTPS / reverse-proxy requests.
+  - Added sliding-window login brute-force rate limiting (`429 Too Many Requests`), 128-byte password cap, 64 KB JSON body limit (`http.MaxBytesReader`), and removed the hardcoded `admin123` fallback in `ha-entrypoint.sh`.
+  - Added HLS concurrency limits (max 2 per user with oldest-session auto-eviction, max 4 global), strict M3U8 parameter allowlisting + `url.QueryEscape`, strict segment index bounds checking, admin-only deduplicated library scanning, `http.Server` `ReadHeaderTimeout`/`IdleTimeout`, and a 10 MB external subtitle read cap.
+  - Added global security headers (`X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, HA Ingress-compatible `X-Frame-Options: SAMEORIGIN` & `Content-Security-Policy` with `frame-ancestors 'self'`), same-origin CSRF checks on mutating requests, removed unnecessary `Access-Control-Allow-Origin: *` on subtitles, hid internal `file_path` and raw SQLite errors from API responses, and pinned SHA256 verification for `raspberrypi-archive-keyring` in `Dockerfile`.
+
 ## 0.1.12
 
 - Fixed Raspberry Pi 5 4K 10-bit HEVC hardware decode hitting `Cannot allocate memory` (ENOMEM) on Home Assistant OS's 64 MB `linux,cma` pool: removed `/dev/dma_heap/linux,cma` and `/dev/dma_heap/reserved` from `config.yaml` so `rpi-ffmpeg` avoids falling through to the small CMA heap when `/dev/dma_heap/vidbuf_cached` is absent on HAOS and instead uses `MMap` + `VIDIOC_EXPBUF` via `rpi-hevc-dec`'s BCM2712 IOMMU (full system RAM).

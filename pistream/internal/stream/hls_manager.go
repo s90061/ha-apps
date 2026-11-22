@@ -4,12 +4,16 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +22,68 @@ import (
 	"pistream/internal/db"
 )
 
+const (
+	maxGlobalHLSSessions  = 4
+	maxPerUserHLSSessions = 2
+)
+
+var (
+	ErrInvalidSessionID   = errors.New("無效的串流 Session ID")
+	ErrInvalidStreamParam = errors.New("無效的串流模式或畫質參數")
+	ErrSegmentOutOfRange  = errors.New("切片編號超出影片範圍")
+	ErrTooManySessions    = errors.New("同時串流轉碼數量已達上限，請稍後再試")
+
+	sessionIDRegex = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+)
+
+func ValidateSessionID(sessionID string) bool {
+	return sessionIDRegex.MatchString(sessionID)
+}
+
+func ValidateMode(mode string) bool {
+	return mode == "remux" || mode == "transcode"
+}
+
+func ValidateQuality(quality string) bool {
+	return quality == "original" || quality == "1080p" || quality == "720p"
+}
+
+func sessionKey(ownerUserID int64, sessionID string) string {
+	return fmt.Sprintf("u%d:%s", ownerUserID, sessionID)
+}
+
+func isSubpath(baseDir, targetPath string) bool {
+	absBase, err := filepath.Abs(baseDir)
+	if err != nil {
+		return false
+	}
+	absTarget, err := filepath.Abs(targetPath)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absBase, absTarget)
+	if err != nil {
+		return false
+	}
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return false
+	}
+	return true
+}
+
+func maxSegmentIndex(durationSec float64, segDur int) int {
+	if segDur <= 0 {
+		segDur = 4
+	}
+	if durationSec <= 0 {
+		return 1
+	}
+	return int(math.Ceil(durationSec/float64(segDur))) + 2
+}
+
 type HLSSession struct {
+	Key            string
+	OwnerUserID    int64
 	SessionID      string
 	Media          *db.MediaFile
 	Mode           string
@@ -55,30 +120,32 @@ func NewHLSManager(cfg *config.Config) *HLSManager {
 	return mgr
 }
 
-func (m *HLSManager) isSessionStopped(sessionID string) bool {
+func (m *HLSManager) isSessionStopped(ownerUserID int64, sessionID string) bool {
 	if sessionID == "" {
 		return false
 	}
+	key := sessionKey(ownerUserID, sessionID)
 	m.mu.RLock()
-	_, stopped := m.stoppedSessions[sessionID]
+	_, stopped := m.stoppedSessions[key]
 	m.mu.RUnlock()
 	return stopped
 }
 
-// StopSession 主動立即終止指定 Session 的 FFmpeg 轉碼/換殼行程並清除暫存切片。
-// 當 tombstone=true 時會短暫標記該 sessionID 為已終止，防止關閉播放器瞬間仍在途中的切片請求重新喚起 FFmpeg。
-func (m *HLSManager) StopSession(sessionID string, tombstone bool) bool {
-	if sessionID == "" {
+// StopSession 主動立即終止指定使用者擁有的 Session 之 FFmpeg 行程並清除暫存切片。
+// 當 tombstone=true 時會短暫標記該 (userID, sessionID) 為已終止，防止關閉播放器瞬間仍在途中的切片請求重新喚起 FFmpeg。
+func (m *HLSManager) StopSession(ownerUserID int64, sessionID string, tombstone bool) bool {
+	if !ValidateSessionID(sessionID) {
 		return false
 	}
+	key := sessionKey(ownerUserID, sessionID)
 
 	m.mu.Lock()
 	if tombstone {
-		m.stoppedSessions[sessionID] = time.Now()
+		m.stoppedSessions[key] = time.Now()
 	}
-	sess, exists := m.sessions[sessionID]
+	sess, exists := m.sessions[key]
 	if exists {
-		delete(m.sessions, sessionID)
+		delete(m.sessions, key)
 	}
 	m.mu.Unlock()
 
@@ -87,7 +154,7 @@ func (m *HLSManager) StopSession(sessionID string, tombstone bool) bool {
 	}
 
 	sess.mu.Lock()
-	fmt.Printf("[HLSManager] 主動停止並回收 Session: %s\n", sessionID)
+	fmt.Printf("[HLSManager] 主動停止並回收 Session: %s\n", key)
 	m.terminateSessionLocked(sess)
 	sess.mu.Unlock()
 	return true
@@ -105,7 +172,7 @@ func (m *HLSManager) terminateSessionLocked(sess *HLSSession) {
 		}
 		sess.CancelFunc = nil
 	}
-	if sess.OutputDir != "" {
+	if sess.OutputDir != "" && isSubpath(m.cfg.TranscodeTempDir, sess.OutputDir) {
 		_ = os.RemoveAll(sess.OutputDir)
 	}
 }
@@ -121,6 +188,10 @@ func (m *HLSManager) GenerateVirtualPlaylist(media *db.MediaFile, sessionID, mod
 	if totalSegs <= 0 {
 		totalSegs = 1
 	}
+
+	escSession := url.QueryEscape(sessionID)
+	escMode := url.QueryEscape(mode)
+	escQuality := url.QueryEscape(quality)
 
 	var buf bytes.Buffer
 	buf.WriteString("#EXTM3U\n")
@@ -138,26 +209,66 @@ func (m *HLSManager) GenerateVirtualPlaylist(media *db.MediaFile, sessionID, mod
 		}
 		buf.WriteString(fmt.Sprintf("#EXTINF:%.3f,\n", dur))
 		buf.WriteString(fmt.Sprintf("seg_%05d.ts?session=%s&mode=%s&quality=%s&audio=%d\n",
-			i, sessionID, mode, quality, audioTrack))
+			i, escSession, escMode, escQuality, audioTrack))
 		remaining -= segDur
 	}
 	buf.WriteString("#EXT-X-ENDLIST\n")
 	return buf.String()
 }
 
-func (m *HLSManager) getOrCreateSession(sessionID string, media *db.MediaFile, mode, quality string, audioTrack int) *HLSSession {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (m *HLSManager) getOrCreateSession(ownerUserID int64, sessionID string, media *db.MediaFile, mode, quality string, audioTrack int) (*HLSSession, error) {
+	if !ValidateSessionID(sessionID) {
+		return nil, ErrInvalidSessionID
+	}
+	key := sessionKey(ownerUserID, sessionID)
 
-	if sess, exists := m.sessions[sessionID]; exists {
+	var evicted *HLSSession
+
+	m.mu.Lock()
+	if sess, exists := m.sessions[key]; exists {
 		sess.LastActive = time.Now()
-		return sess
+		m.mu.Unlock()
+		return sess, nil
 	}
 
-	outDir := filepath.Join(m.cfg.TranscodeTempDir, fmt.Sprintf("file_%d_%s", media.ID, sessionID))
+	// 限制單一帳號同時轉碼數：若超過上限則自動回收該帳號最舊的 Session（支援分頁切換不卡死）
+	var userSessions []*HLSSession
+	for _, s := range m.sessions {
+		if s.OwnerUserID == ownerUserID {
+			userSessions = append(userSessions, s)
+		}
+	}
+	if len(userSessions) >= maxPerUserHLSSessions {
+		oldest := userSessions[0]
+		for _, s := range userSessions[1:] {
+			if s.LastActive.Before(oldest.LastActive) {
+				oldest = s
+			}
+		}
+		delete(m.sessions, oldest.Key)
+		evicted = oldest
+	}
+
+	if len(m.sessions) >= maxGlobalHLSSessions {
+		m.mu.Unlock()
+		if evicted != nil {
+			evicted.mu.Lock()
+			m.terminateSessionLocked(evicted)
+			evicted.mu.Unlock()
+		}
+		return nil, ErrTooManySessions
+	}
+
+	outDir := filepath.Join(m.cfg.TranscodeTempDir, fmt.Sprintf("u%d_file_%d_%s", ownerUserID, media.ID, sessionID))
+	if !isSubpath(m.cfg.TranscodeTempDir, outDir) {
+		m.mu.Unlock()
+		return nil, ErrInvalidSessionID
+	}
 	_ = os.MkdirAll(outDir, 0755)
 
 	sess := &HLSSession{
+		Key:            key,
+		OwnerUserID:    ownerUserID,
 		SessionID:      sessionID,
 		Media:          media,
 		Mode:           mode,
@@ -167,17 +278,38 @@ func (m *HLSManager) getOrCreateSession(sessionID string, media *db.MediaFile, m
 		CurrentHeadSeg: -100,
 		LastActive:     time.Now(),
 	}
-	m.sessions[sessionID] = sess
-	return sess
+	m.sessions[key] = sess
+	m.mu.Unlock()
+
+	if evicted != nil {
+		evicted.mu.Lock()
+		fmt.Printf("[HLSManager] 使用者 %d 超過並發上限，自動回收最舊 Session: %s\n", ownerUserID, evicted.Key)
+		m.terminateSessionLocked(evicted)
+		evicted.mu.Unlock()
+	}
+
+	return sess, nil
 }
 
 // EnsureSegmentReady 確保請求的切片已就緒；若偵測到使用者拖拉時間軸，立即重啟 FFmpeg 跳轉至新時段
-func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, sessionID string, media *db.MediaFile, mode, quality string, audioTrack, segIndex int, seekSeq string) (string, error) {
-	if m.isSessionStopped(sessionID) {
+func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, ownerUserID int64, sessionID string, media *db.MediaFile, mode, quality string, audioTrack, segIndex int, seekSeq string) (string, error) {
+	if !ValidateSessionID(sessionID) {
+		return "", ErrInvalidSessionID
+	}
+	if !ValidateMode(mode) || !ValidateQuality(quality) {
+		return "", ErrInvalidStreamParam
+	}
+	if segIndex < 0 || segIndex > maxSegmentIndex(media.DurationSeconds, m.cfg.SegmentDuration) {
+		return "", ErrSegmentOutOfRange
+	}
+	if m.isSessionStopped(ownerUserID, sessionID) {
 		return "", context.Canceled
 	}
 
-	sess := m.getOrCreateSession(sessionID, media, mode, quality, audioTrack)
+	sess, err := m.getOrCreateSession(ownerUserID, sessionID, media, mode, quality, audioTrack)
+	if err != nil {
+		return "", err
+	}
 
 	targetSegPath := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", segIndex))
 	nextSegPath := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", segIndex+1))
@@ -542,9 +674,21 @@ func (m *HLSManager) cleanupLoop() {
 }
 
 func ParseSegmentIndex(segName string) (int, error) {
-	clean := strings.TrimPrefix(segName, "seg_")
-	clean = strings.TrimSuffix(clean, ".ts")
-	var idx int
-	_, err := fmt.Sscanf(clean, "%d", &idx)
-	return idx, err
+	if !strings.HasPrefix(segName, "seg_") || !strings.HasSuffix(segName, ".ts") {
+		return 0, errors.New("無效的切片檔名格式")
+	}
+	clean := strings.TrimSuffix(strings.TrimPrefix(segName, "seg_"), ".ts")
+	if len(clean) == 0 || len(clean) > 6 {
+		return 0, errors.New("無效的切片編號長度")
+	}
+	for i := 0; i < len(clean); i++ {
+		if clean[i] < '0' || clean[i] > '9' {
+			return 0, errors.New("切片編號僅限數字")
+		}
+	}
+	idx, err := strconv.Atoi(clean)
+	if err != nil || idx < 0 {
+		return 0, errors.New("無效的切片編號")
+	}
+	return idx, nil
 }

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -15,6 +16,8 @@ import (
 	"pistream/internal/db"
 	"pistream/internal/scanner"
 )
+
+const maxSubtitleFileBytes = 10 * 1024 * 1024 // 10 MB 上限，防止異常字幕檔耗盡記憶體
 
 // ServeDirectStream 處理 HTTP 206 Partial Content 零拷貝直連播放（支援毫秒級任意區段拖拉）
 func ServeDirectStream(w http.ResponseWriter, r *http.Request, filePath string) {
@@ -38,7 +41,6 @@ func ServeDirectStream(w http.ResponseWriter, r *http.Request, filePath string) 
 // ServeSubtitleWebVTT 支援外掛字幕 (.srt/.vtt/.ass) 記憶體極速轉換，以及內嵌字幕本地快取提取
 func ServeSubtitleWebVTT(w http.ResponseWriter, r *http.Request, media *db.MediaFile, subID string, cacheDir string) {
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	var tracks []scanner.SubtitleTrack
 	_ = json.Unmarshal([]byte(media.SubtitlesJSON), &tracks)
@@ -56,10 +58,16 @@ func ServeSubtitleWebVTT(w http.ResponseWriter, r *http.Request, media *db.Media
 		return
 	}
 
-	// 1. 外掛字幕檔：直接讀取並於記憶體內轉為 WebVTT (< 2ms，不啟動 FFmpeg)
+	// 1. 外掛字幕檔：直接讀取並於記憶體內轉為 WebVTT (< 2ms，不啟動 FFmpeg)，並限制最大 10 MB
 	if target.IsExternal && target.ExtPath != "" {
-		raw, err := os.ReadFile(target.ExtPath)
+		f, err := os.Open(target.ExtPath)
 		if err != nil {
+			_, _ = w.Write([]byte("WEBVTT\n\n"))
+			return
+		}
+		raw, err := io.ReadAll(io.LimitReader(f, maxSubtitleFileBytes+1))
+		_ = f.Close()
+		if err != nil || len(raw) > maxSubtitleFileBytes {
 			_, _ = w.Write([]byte("WEBVTT\n\n"))
 			return
 		}

@@ -67,8 +67,10 @@ func main() {
 	router := api.NewRouter(cfg, store, hlsMgr)
 
 	server := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: router,
+		Addr:              ":" + cfg.Port,
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	stop := make(chan os.Signal, 1)

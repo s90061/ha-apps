@@ -87,21 +87,22 @@ fi
 # Handle initial or forced admin password
 export ADMIN_USER="${admin_user_opt}"
 if [[ -n "${admin_pass_opt}" ]]; then
-  if [[ "${#admin_pass_opt}" -lt 4 ]]; then
-    printf '[ha-init] Warning: admin_password must be at least 4 characters; ignoring override\n' >&2
-    unset FORCE_ADMIN_PASSWORD
-    export ADMIN_PASSWORD="admin123"
-  else
-    export ADMIN_PASSWORD="${admin_pass_opt}"
-    export FORCE_ADMIN_PASSWORD="true"
-    printf '[ha-init] Syncing PiStream admin account "%s" password from Home Assistant configuration\n' "${ADMIN_USER}"
+  if [[ "${#admin_pass_opt}" -lt 4 ]] || [[ "${#admin_pass_opt}" -gt 128 ]]; then
+    printf '[ha-init] Warning: admin_password must be 4-128 characters; ignoring override\n' >&2
+    admin_pass_opt=""
   fi
+fi
+
+if [[ -n "${admin_pass_opt}" ]]; then
+  export ADMIN_PASSWORD="${admin_pass_opt}"
+  export FORCE_ADMIN_PASSWORD="true"
+  printf '[ha-init] Syncing PiStream admin account "%s" password from Home Assistant configuration\n' "${ADMIN_USER}"
 else
   unset FORCE_ADMIN_PASSWORD
   if [[ ! -s "${DB_FILE}" ]]; then
-    gen_pass="$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 14 || true)"
-    if [[ "${#gen_pass}" -lt 8 ]]; then
-      gen_pass="admin123"
+    gen_pass="$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 16 || true)"
+    if [[ "${#gen_pass}" -lt 12 ]]; then
+      gen_pass="$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
     fi
     export ADMIN_PASSWORD="${gen_pass}"
     printf '[ha-init] ==================================================\n'
@@ -110,6 +111,7 @@ else
     printf '[ha-init] ==================================================\n'
   else
     export ADMIN_PASSWORD="keep_existing_password"
+    chmod 600 "${DB_FILE}" 2>/dev/null || true
   fi
 fi
 

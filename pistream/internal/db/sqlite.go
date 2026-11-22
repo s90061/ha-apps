@@ -16,13 +16,14 @@ type User struct {
 	Username     string `json:"username"`
 	PasswordHash string `json:"-"`
 	IsAdmin      bool   `json:"is_admin"`
+	TokenVersion int64  `json:"-"`
 	CreatedAt    string `json:"created_at"`
 }
 
 type MediaFile struct {
 	ID              int64   `json:"id"`
 	Title           string  `json:"title"`
-	FilePath        string  `json:"file_path"`
+	FilePath        string  `json:"-"`
 	RelPath         string  `json:"rel_path"`
 	RelDir          string  `json:"rel_dir"`
 	FileSize        int64   `json:"file_size"`
@@ -89,6 +90,7 @@ func InitDB(dbPath string) (*Store, error) {
 		username TEXT NOT NULL UNIQUE,
 		password_hash TEXT NOT NULL,
 		is_admin BOOLEAN NOT NULL DEFAULT 0,
+		token_version INTEGER NOT NULL DEFAULT 1,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
@@ -130,8 +132,9 @@ func InitDB(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("初始化 Schema 失敗: %w", err)
 	}
 
-	// 既有資料庫升級相容：若舊版資料表尚未包含 file_mod_time 欄位則補上（已存在時忽略錯誤）
+	// 既有資料庫升級相容：若舊版資料表尚未包含 file_mod_time 或 token_version 欄位則補上（已存在時忽略錯誤）
 	_, _ = conn.Exec(`ALTER TABLE media_files ADD COLUMN file_mod_time INTEGER NOT NULL DEFAULT 0`)
+	_, _ = conn.Exec(`ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1`)
 
 	return &Store{Conn: conn}, nil
 }
@@ -151,7 +154,7 @@ func (s *Store) EnsureDefaultAdmin(adminUser, adminPass string) error {
 		return err
 	}
 	if count > 0 && forceSync {
-		res, err := s.Conn.Exec(`UPDATE users SET password_hash = ?, is_admin = 1 WHERE username = ?`, hash, adminUser)
+		res, err := s.Conn.Exec(`UPDATE users SET password_hash = ?, is_admin = 1, token_version = token_version + 1 WHERE username = ?`, hash, adminUser)
 		if err != nil {
 			return err
 		}
@@ -159,23 +162,23 @@ func (s *Store) EnsureDefaultAdmin(adminUser, adminPass string) error {
 			return nil
 		}
 	}
-	_, err = s.Conn.Exec(`INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, 1)`, adminUser, hash)
+	_, err = s.Conn.Exec(`INSERT INTO users (username, password_hash, is_admin, token_version) VALUES (?, ?, 1, 1)`, adminUser, hash)
 	return err
 }
 
 func (s *Store) GetUserByUsername(username string) (*User, error) {
-	row := s.Conn.QueryRow(`SELECT id, username, password_hash, is_admin, created_at FROM users WHERE username = ?`, username)
+	row := s.Conn.QueryRow(`SELECT id, username, password_hash, is_admin, COALESCE(token_version, 1), created_at FROM users WHERE username = ?`, username)
 	var u User
-	if err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.IsAdmin, &u.CreatedAt); err != nil {
+	if err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.IsAdmin, &u.TokenVersion, &u.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &u, nil
 }
 
 func (s *Store) GetUserByID(id int64) (*User, error) {
-	row := s.Conn.QueryRow(`SELECT id, username, password_hash, is_admin, created_at FROM users WHERE id = ?`, id)
+	row := s.Conn.QueryRow(`SELECT id, username, password_hash, is_admin, COALESCE(token_version, 1), created_at FROM users WHERE id = ?`, id)
 	var u User
-	if err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.IsAdmin, &u.CreatedAt); err != nil {
+	if err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.IsAdmin, &u.TokenVersion, &u.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &u, nil
@@ -200,7 +203,7 @@ func (s *Store) ListUsers() ([]User, error) {
 }
 
 func (s *Store) CreateUser(username, passwordHash string, isAdmin bool) (*User, error) {
-	res, err := s.Conn.Exec(`INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)`, username, passwordHash, isAdmin)
+	res, err := s.Conn.Exec(`INSERT INTO users (username, password_hash, is_admin, token_version) VALUES (?, ?, ?, 1)`, username, passwordHash, isAdmin)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +212,12 @@ func (s *Store) CreateUser(username, passwordHash string, isAdmin bool) (*User, 
 }
 
 func (s *Store) UpdateUserPassword(id int64, passwordHash string) error {
-	_, err := s.Conn.Exec(`UPDATE users SET password_hash = ? WHERE id = ?`, passwordHash, id)
+	_, err := s.Conn.Exec(`UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?`, passwordHash, id)
+	return err
+}
+
+func (s *Store) BumpTokenVersion(id int64) error {
+	_, err := s.Conn.Exec(`UPDATE users SET token_version = token_version + 1 WHERE id = ?`, id)
 	return err
 }
 

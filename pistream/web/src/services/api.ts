@@ -97,9 +97,9 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  // 驗證與帳號
+  // 驗證與帳號 (純 HttpOnly Cookie 驗證)
   login: (username: string, password: string) =>
-    request<{ token: string; user: User }>('/api/auth/login', {
+    request<{ user: User }>('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     }),
