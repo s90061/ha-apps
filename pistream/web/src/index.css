@@ -38,7 +38,9 @@
 video::cue {
   background-color: rgba(15, 15, 16, 0.82);
   color: #ededed;
-  font-family: "Inter", "Noto Sans TC", "PingFang TC", sans-serif;
+  font-family: "Microsoft JhengHei", "PingFang TC", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK TC", system-ui, sans-serif;
   font-size: var(--pistream-cue-size, 1.05em);
+  font-weight: 400;
+  font-feature-settings: normal;
   line-height: 1.5;
 }

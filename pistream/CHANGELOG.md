@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1
+
+- Fixed intermittent CJK subtitle glyph corruption / garbled characters at large subtitle scales (e.g. `180%`) on Windows Firefox WebRender by switching `video::cue` in `web/src/index.css` from Google Fonts' 124-slice remote `Noto Sans TC` WOFF2 webfont to a single local native OS CJK system font stack (`"Microsoft JhengHei"`, `"PingFang TC"`, `"Microsoft YaHei"`, `"PingFang SC"`, `"Noto Sans CJK TC"`, `system-ui, sans-serif`), setting explicit regular `font-weight: 400`, and resetting inherited `font-feature-settings: normal`.
+
 ## 1.0.0
 
 First stable production release of PiStream for Raspberry Pi 5 / Home Assistant OS (`aarch64`), following complete end-to-end functional, streaming, subtitle, security, and responsive layout verification:
