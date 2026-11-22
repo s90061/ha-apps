@@ -48,6 +48,7 @@ RUN apt-get update && \
         tzdata && \
     curl -fsSL "https://archive.raspberrypi.com/debian/pool/main/r/raspberrypi-archive-keyring/raspberrypi-archive-keyring_2025.1+rpt1_all.deb" \
         -o /tmp/raspberrypi-archive-keyring.deb && \
+    echo "2e727149d7acb8cc7f604e66d0049161039c8aa1eaf1175e54f9e69d963d60e4  /tmp/raspberrypi-archive-keyring.deb" | sha256sum -c - && \
     dpkg -i /tmp/raspberrypi-archive-keyring.deb && \
     rm -f /tmp/raspberrypi-archive-keyring.deb && \
     printf 'deb [signed-by=/usr/share/keyrings/raspberrypi-archive-keyring.gpg] https://archive.raspberrypi.com/debian/ trixie main\n' \

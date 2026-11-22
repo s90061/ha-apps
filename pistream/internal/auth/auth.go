@@ -20,16 +20,21 @@ type contextKey string
 
 const UserContextKey contextKey = "pistream_user"
 const CookieName = "pistream_token"
+const MaxPasswordBytes = 128
 
 type TokenPayload struct {
-	UserID   int64  `json:"uid"`
-	Username string `json:"usr"`
-	IsAdmin  bool   `json:"adm"`
-	Exp      int64  `json:"exp"`
+	UserID       int64  `json:"uid"`
+	Username     string `json:"usr"`
+	IsAdmin      bool   `json:"adm"`
+	TokenVersion int64  `json:"tv,omitempty"`
+	Exp          int64  `json:"exp"`
 }
 
 // HashPassword 使用多次迭代 HMAC-SHA256 + 隨機 Salt 進行密碼雜湊 (零外部 CGO 依賴)
 func HashPassword(password string) (string, error) {
+	if len(password) > MaxPasswordBytes {
+		return "", errors.New("密碼長度超出上限")
+	}
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
@@ -40,6 +45,9 @@ func HashPassword(password string) (string, error) {
 
 // VerifyPassword 驗證明文密碼是否與雜湊值相符
 func VerifyPassword(password, storedHash string) bool {
+	if len(password) > MaxPasswordBytes {
+		return false
+	}
 	parts := strings.Split(storedHash, "$")
 	if len(parts) != 2 {
 		return false
@@ -68,13 +76,14 @@ func deriveKey(password, salt []byte, iterations int) []byte {
 	return digest
 }
 
-// SignToken 簽發包含過期時間的無狀態 HMAC-SHA256 Token
-func SignToken(secret string, userID int64, username string, isAdmin bool, ttl time.Duration) (string, error) {
+// SignToken 簽發包含過期時間與憑證版本號 (token_version) 的 HMAC-SHA256 Cookie 憑證
+func SignToken(secret string, userID int64, username string, isAdmin bool, tokenVersion int64, ttl time.Duration) (string, error) {
 	payload := TokenPayload{
-		UserID:   userID,
-		Username: username,
-		IsAdmin:  isAdmin,
-		Exp:      time.Now().Add(ttl).Unix(),
+		UserID:       userID,
+		Username:     username,
+		IsAdmin:      isAdmin,
+		TokenVersion: tokenVersion,
+		Exp:          time.Now().Add(ttl).Unix(),
 	}
 	rawJSON, err := json.Marshal(payload)
 	if err != nil {
@@ -115,17 +124,10 @@ func computeHMAC(data, secret string) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-// ExtractTokenFromRequest 支援從 Cookie、Authorization Header 或 URL Query (?token=) 讀取憑證
+// ExtractTokenFromRequest 僅從 HttpOnly Cookie 讀取登入憑證（停用 URL ?token= 與 Bearer Token 以防外洩）
 func ExtractTokenFromRequest(r *http.Request) string {
 	if c, err := r.Cookie(CookieName); err == nil && c.Value != "" {
 		return c.Value
-	}
-	authHeader := r.Header.Get("Authorization")
-	if strings.HasPrefix(authHeader, "Bearer ") {
-		return strings.TrimPrefix(authHeader, "Bearer ")
-	}
-	if q := r.URL.Query().Get("token"); q != "" {
-		return q
 	}
 	return ""
 }

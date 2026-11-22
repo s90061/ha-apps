@@ -99,20 +99,22 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Right: Actions & Account */}
         <div className="flex items-center gap-2 flex-none">
-          <button
-            type="button"
-            onClick={onScan}
-            disabled={scanning}
-            title="掃描媒體目錄"
-            className="h-9 px-3 rounded-lg bg-surface hover:bg-raised disabled:opacity-50 border border-border text-xs font-medium text-ink-secondary hover:text-ink-primary flex items-center gap-2 cinema-focus transition-colors duration-150 ease-cinema"
-          >
-            <RefreshCw
-              size={15}
-              strokeWidth={1.5}
-              className={`text-ink-muted ${scanning ? 'animate-spin' : ''}`}
-            />
-            <span className="hidden md:inline">{scanning ? '掃描中' : '掃描'}</span>
-          </button>
+          {user.is_admin && (
+            <button
+              type="button"
+              onClick={onScan}
+              disabled={scanning}
+              title="掃描媒體目錄"
+              className="h-9 px-3 rounded-lg bg-surface hover:bg-raised disabled:opacity-50 border border-border text-xs font-medium text-ink-secondary hover:text-ink-primary flex items-center gap-2 cinema-focus transition-colors duration-150 ease-cinema"
+            >
+              <RefreshCw
+                size={15}
+                strokeWidth={1.5}
+                className={`text-ink-muted ${scanning ? 'animate-spin' : ''}`}
+              />
+              <span className="hidden md:inline">{scanning ? '掃描中' : '掃描'}</span>
+            </button>
+          )}
 
           <button
             type="button"

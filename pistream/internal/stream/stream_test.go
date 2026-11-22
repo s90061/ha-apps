@@ -335,17 +335,26 @@ func TestHLSManagerStopSessionAndTombstone(t *testing.T) {
 	})
 
 	media := &db.MediaFile{
-		ID:       42,
-		FilePath: filepath.Join(tempDir, "nonexistent.mkv"),
+		ID:              42,
+		FilePath:        filepath.Join(tempDir, "nonexistent.mkv"),
+		DurationSeconds: 120,
 	}
 
-	sess := mgr.getOrCreateSession("sess_close_test", media, "transcode", "1080p", 0)
+	sess, err := mgr.getOrCreateSession(1, "sess_close_test", media, "transcode", "1080p", 0)
+	if err != nil {
+		t.Fatalf("建立 Session 失敗: %v", err)
+	}
 	if _, err := os.Stat(sess.OutputDir); err != nil {
 		t.Fatalf("預期已建立暫存目錄 %s: %v", sess.OutputDir, err)
 	}
 
+	// 其他使用者不得停止 user 1 的 Session（跨帳號隔離）
+	if stopped := mgr.StopSession(2, "sess_close_test", true); stopped {
+		t.Fatalf("user 2 不應能停止 user 1 的 Session")
+	}
+
 	// 主動停止 Session（帶 tombstone=true）：應立即刪除暫存目錄並標記為已停止
-	if stopped := mgr.StopSession("sess_close_test", true); !stopped {
+	if stopped := mgr.StopSession(1, "sess_close_test", true); !stopped {
 		t.Fatalf("預期 StopSession 回傳 true")
 	}
 	if _, err := os.Stat(sess.OutputDir); !os.IsNotExist(err) {
@@ -353,17 +362,80 @@ func TestHLSManagerStopSessionAndTombstone(t *testing.T) {
 	}
 
 	// 關閉瞬間遲到的切片請求應立即回傳 context.Canceled，不得重新啟動 FFmpeg
-	_, err := mgr.EnsureSegmentReady(context.Background(), "sess_close_test", media, "transcode", "1080p", 0, 1, "")
+	_, err = mgr.EnsureSegmentReady(context.Background(), 1, "sess_close_test", media, "transcode", "1080p", 0, 1, "")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("預期已停止的 Session 拒絕遲到切片請求並回傳 context.Canceled，實際: %v", err)
 	}
 
 	// 非 tombstone 停止（例如切回 direct 模式）：應清除 Session 但允許同一個 sessionID 之後再切回 HLS
-	mgr.getOrCreateSession("sess_direct_switch", media, "transcode", "1080p", 0)
-	if stopped := mgr.StopSession("sess_direct_switch", false); !stopped {
+	if _, err := mgr.getOrCreateSession(1, "sess_direct_switch", media, "transcode", "1080p", 0); err != nil {
+		t.Fatalf("建立 sess_direct_switch 失敗: %v", err)
+	}
+	if stopped := mgr.StopSession(1, "sess_direct_switch", false); !stopped {
 		t.Fatalf("預期非 tombstone StopSession 回傳 true")
 	}
-	if mgr.isSessionStopped("sess_direct_switch") {
+	if mgr.isSessionStopped(1, "sess_direct_switch") {
 		t.Fatalf("非 tombstone 停止不應將 sessionID 列入 tombstone")
+	}
+}
+
+func TestHLSManagerSecurityBoundaries(t *testing.T) {
+	tempDir := t.TempDir()
+	victimDir := filepath.Join(filepath.Dir(tempDir), "victim_config_dir")
+	if err := os.MkdirAll(victimDir, 0755); err != nil {
+		t.Fatalf("建立測試目錄失敗: %v", err)
+	}
+	defer os.RemoveAll(victimDir)
+
+	mgr := NewHLSManager(&config.Config{
+		TranscodeTempDir: tempDir,
+		SegmentDuration:  4,
+		MaxKeepSegments:  10,
+	})
+	media := &db.MediaFile{
+		ID:              7,
+		FilePath:        filepath.Join(tempDir, "movie.mkv"),
+		DurationSeconds: 40,
+	}
+
+	// 1. 路徑遍歷 sessionID 必須一律被阻斷，且不得刪除外部目錄
+	for _, bad := range []string{"/../../../../config", "../victim_config_dir", "a/b", "sess\n#EXT-X-KEY", ""} {
+		if ValidateSessionID(bad) {
+			t.Fatalf("惡意 sessionID %q 不應通過驗證", bad)
+		}
+		if _, err := mgr.EnsureSegmentReady(context.Background(), 1, bad, media, "transcode", "1080p", 0, 0, ""); !errors.Is(err, ErrInvalidSessionID) {
+			t.Fatalf("預期 %q 回傳 ErrInvalidSessionID，實際: %v", bad, err)
+		}
+	}
+	if _, err := os.Stat(victimDir); err != nil {
+		t.Fatalf("外部目錄不應被影響: %v", err)
+	}
+
+	// 2. 負數與超出片長範圍的切片索引必須被拒絕
+	if _, err := ParseSegmentIndex("seg_-1.ts"); err == nil {
+		t.Fatalf("負數切片編號應被拒絕")
+	}
+	if _, err := ParseSegmentIndex("seg_00001_evil.ts"); err == nil {
+		t.Fatalf("夾帶非數字字元的切片名稱應被拒絕")
+	}
+	if _, err := mgr.EnsureSegmentReady(context.Background(), 1, "valid_sess", media, "transcode", "1080p", 0, 9999, ""); !errors.Is(err, ErrSegmentOutOfRange) {
+		t.Fatalf("預期超出片長的切片編號回傳 ErrSegmentOutOfRange，實際: %v", err)
+	}
+
+	// 3. 並發 Session 上限保護：單一帳號最多 2 個（第 3 個自動淘汰最舊），全域最多 4 個
+	for _, s := range []string{"s1", "s2", "s3"} {
+		if _, err := mgr.getOrCreateSession(1, s, media, "transcode", "1080p", 0); err != nil {
+			t.Fatalf("user 1 建立 %s 失敗: %v", s, err)
+		}
+	}
+	if _, err := mgr.getOrCreateSession(2, "u2_s1", media, "transcode", "1080p", 0); err != nil {
+		t.Fatalf("user 2 建立 u2_s1 失敗: %v", err)
+	}
+	if _, err := mgr.getOrCreateSession(2, "u2_s2", media, "transcode", "1080p", 0); err != nil {
+		t.Fatalf("user 2 建立 u2_s2 失敗: %v", err)
+	}
+	// 此時全域已達 4 個 Session，user 3 嘗試再開第 5 個應回 ErrTooManySessions
+	if _, err := mgr.getOrCreateSession(3, "u3_s1", media, "transcode", "1080p", 0); !errors.Is(err, ErrTooManySessions) {
+		t.Fatalf("預期超過全域上限時回傳 ErrTooManySessions，實際: %v", err)
 	}
 }

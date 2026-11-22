@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"pistream/internal/auth"
@@ -21,6 +22,20 @@ import (
 
 func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) http.Handler {
 	mux := http.NewServeMux()
+	loginLimiter := newLoginRateLimiter(loginWindow, loginMaxFailures)
+	var scanRunning atomic.Bool
+
+	setAuthCookie := func(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
+		http.SetCookie(w, &http.Cookie{
+			Name:     auth.CookieName,
+			Value:    value,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   isHTTPSRequest(r),
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   maxAge,
+		})
+	}
 
 	requireAuth := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -34,6 +49,18 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 				return
 			}
+			// 每次請求皆即時核對 SQLite，確保已刪除帳號、重設密碼或登出的舊憑證立即失效
+			dbUser, err := store.GetUserByID(payload.UserID)
+			if err != nil {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "帳號不存在或已被移除"})
+				return
+			}
+			if payload.TokenVersion <= 0 || payload.TokenVersion != dbUser.TokenVersion {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "登入憑證已失效，請重新登入"})
+				return
+			}
+			payload.Username = dbUser.Username
+			payload.IsAdmin = dbUser.IsAdmin
 			ctx := auth.WithUser(r.Context(), payload)
 			next(w, r.WithContext(ctx))
 		}
@@ -58,52 +85,58 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 		})
 	})
 
-	// 2. 身份驗證 API
+	// 2. 身份驗證 API (純 HttpOnly Cookie 驗證，停用明文 Token 回傳)
 	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Username string `json:"username"`
 			Password string `json:"password"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := decodeJSON(w, r, &body); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "請求格式錯誤"})
 			return
 		}
 		username := strings.TrimSpace(body.Username)
-		user, err := store.GetUserByUsername(username)
-		if err != nil || !auth.VerifyPassword(body.Password, user.PasswordHash) {
+		ip := clientIP(r)
+		if allowed, retryAfter := loginLimiter.Allow(ip, username); !allowed {
+			w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "登入嘗試次數過多，請稍後再試"})
+			return
+		}
+
+		if len(body.Password) > auth.MaxPasswordBytes {
+			loginLimiter.RecordFailure(ip, username)
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "帳號或密碼錯誤"})
 			return
 		}
 
-		token, err := auth.SignToken(cfg.JWTSecret, user.ID, user.Username, user.IsAdmin, 30*24*time.Hour)
+		user, err := store.GetUserByUsername(username)
+		if err != nil || !auth.VerifyPassword(body.Password, user.PasswordHash) {
+			loginLimiter.RecordFailure(ip, username)
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "帳號或密碼錯誤"})
+			return
+		}
+		loginLimiter.RecordSuccess(ip, username)
+
+		cookieVal, err := auth.SignToken(cfg.JWTSecret, user.ID, user.Username, user.IsAdmin, user.TokenVersion, 30*24*time.Hour)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "無法簽發登入憑證"})
 			return
 		}
 
-		http.SetCookie(w, &http.Cookie{
-			Name:     auth.CookieName,
-			Value:    token,
-			Path:     "/",
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-			MaxAge:   30 * 24 * 3600,
-		})
+		setAuthCookie(w, r, cookieVal, 30*24*3600)
 
 		writeJSON(w, http.StatusOK, map[string]any{
-			"token": token,
-			"user":  user,
+			"user": user,
 		})
 	})
 
 	mux.HandleFunc("POST /api/auth/logout", func(w http.ResponseWriter, r *http.Request) {
-		http.SetCookie(w, &http.Cookie{
-			Name:     auth.CookieName,
-			Value:    "",
-			Path:     "/",
-			HttpOnly: true,
-			MaxAge:   -1,
-		})
+		if token := auth.ExtractTokenFromRequest(r); token != "" {
+			if payload, err := auth.VerifyToken(cfg.JWTSecret, token); err == nil {
+				_ = store.BumpTokenVersion(payload.UserID)
+			}
+		}
+		setAuthCookie(w, r, "", -1)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "logged_out"})
 	})
 
@@ -123,8 +156,8 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 			CurrentPassword string `json:"current_password"`
 			NewPassword     string `json:"new_password"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.NewPassword) < 4 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "新密碼長度至少需 4 個字元"})
+		if err := decodeJSON(w, r, &body); err != nil || len(body.NewPassword) < 4 || len(body.NewPassword) > auth.MaxPasswordBytes {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "新密碼長度需介於 4 至 128 個字元"})
 			return
 		}
 		dbUser, err := store.GetUserByID(u.UserID)
@@ -137,7 +170,17 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "密碼加密失敗"})
 			return
 		}
-		_ = store.UpdateUserPassword(u.UserID, hash)
+		if err := store.UpdateUserPassword(u.UserID, hash); err != nil {
+			fmt.Printf("[API] 更新個人密碼失敗 (uid=%d): %v\n", u.UserID, err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "更新密碼失敗"})
+			return
+		}
+		// 密碼更新會遞增 token_version 吊銷其他裝置，同時為當前裝置無縫補發新 Cookie
+		if updatedUser, err := store.GetUserByID(u.UserID); err == nil {
+			if newCookie, err := auth.SignToken(cfg.JWTSecret, updatedUser.ID, updatedUser.Username, updatedUser.IsAdmin, updatedUser.TokenVersion, 30*24*time.Hour); err == nil {
+				setAuthCookie(w, r, newCookie, 30*24*3600)
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 	}))
 
@@ -145,7 +188,8 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 	mux.HandleFunc("GET /api/admin/users", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		users, err := store.ListUsers()
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			fmt.Printf("[API] 讀取使用者清單失敗: %v\n", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "無法讀取使用者清單"})
 			return
 		}
 		writeJSON(w, http.StatusOK, users)
@@ -157,13 +201,13 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 			Password string `json:"password"`
 			IsAdmin  bool   `json:"is_admin"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := decodeJSON(w, r, &body); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "請求格式錯誤"})
 			return
 		}
 		username := strings.TrimSpace(body.Username)
-		if username == "" || len(body.Password) < 4 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "帳號不可為空且密碼至少需 4 個字元"})
+		if username == "" || len(username) > 64 || len(body.Password) < 4 || len(body.Password) > auth.MaxPasswordBytes {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "帳號不可為空且密碼需介於 4 至 128 個字元"})
 			return
 		}
 		hash, err := auth.HashPassword(body.Password)
@@ -188,8 +232,8 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 		var body struct {
 			Password string `json:"password"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Password) < 4 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "密碼長度至少需 4 個字元"})
+		if err := decodeJSON(w, r, &body); err != nil || len(body.Password) < 4 || len(body.Password) > auth.MaxPasswordBytes {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "密碼長度需介於 4 至 128 個字元"})
 			return
 		}
 		hash, err := auth.HashPassword(body.Password)
@@ -198,7 +242,8 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 			return
 		}
 		if err := store.UpdateUserPassword(targetID, hash); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			fmt.Printf("[API] 管理員重設密碼失敗 (target=%d): %v\n", targetID, err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "重設密碼失敗"})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "password_reset"})
@@ -216,7 +261,8 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 			return
 		}
 		if err := store.DeleteUser(targetID); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			fmt.Printf("[API] 刪除使用者失敗 (target=%d): %v\n", targetID, err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "刪除使用者失敗"})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
@@ -229,7 +275,8 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 		sortBy := r.URL.Query().Get("sort")
 		res, err := store.BrowseFolderForUser(u.UserID, relPath, sortBy)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			fmt.Printf("[API] 瀏覽資料夾失敗: %v\n", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "無法讀取資料夾清單"})
 			return
 		}
 		writeJSON(w, http.StatusOK, res)
@@ -241,7 +288,8 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 		sortBy := r.URL.Query().Get("sort")
 		files, err := store.ListMediaFilesForUser(u.UserID, q, sortBy)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			fmt.Printf("[API] 讀取影片清單失敗: %v\n", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "無法讀取影片清單"})
 			return
 		}
 		writeJSON(w, http.StatusOK, files)
@@ -251,14 +299,20 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 		u := auth.GetUser(r)
 		items, err := store.GetContinueWatchingForUser(u.UserID)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			fmt.Printf("[API] 讀取繼續觀看失敗: %v\n", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "無法讀取繼續觀看清單"})
 			return
 		}
 		writeJSON(w, http.StatusOK, items)
 	}))
 
-	mux.HandleFunc("POST /api/library/scan", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/library/scan", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
+		if !scanRunning.CompareAndSwap(false, true) {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "already_scanning"})
+			return
+		}
 		go func() {
+			defer scanRunning.Store(false)
 			count, err := scanner.ScanDirectory(cfg.MediaDir, cfg.CacheDir, store)
 			if err == nil {
 				fmt.Printf("[Scanner] 手動掃描完成，目前共索引 %d 部影片\n", count)
@@ -310,15 +364,24 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 			return
 		}
 
-		sessionID := r.URL.Query().Get("session")
+		sessionID := strings.TrimSpace(r.URL.Query().Get("session"))
 		if sessionID == "" {
 			sessionID = fmt.Sprintf("u%d_%d", u.UserID, time.Now().UnixNano())
+		} else if !stream.ValidateSessionID(sessionID) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "無效的 Session ID"})
+			return
 		}
 		quality := r.URL.Query().Get("quality")
 		if quality == "" {
 			quality = "original"
+		} else if !stream.ValidateQuality(quality) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "無效的畫質參數"})
+			return
 		}
 		audioTrack, _ := strconv.Atoi(r.URL.Query().Get("audio"))
+		if audioTrack < 0 {
+			audioTrack = 0
+		}
 		allowHEVCDirect := r.URL.Query().Get("hevc") == "1" || r.URL.Query().Get("hevc") == "true"
 		allowHEVCHLS := allowHEVCDirect
 		if rawHLS := r.URL.Query().Get("hevc_hls"); rawHLS != "" {
@@ -329,7 +392,7 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 		decision := stream.DecideStreamModeWithAllCaps(media, sessionID, quality, audioTrack, allowHEVCDirect, allowHEVCHLS, allowEAC3)
 		if decision.Mode == "direct" {
 			// 若由 HLS 轉碼/換殼切回原生直連 (direct)，立刻終止背景 FFmpeg 行程釋放 CPU
-			hlsMgr.StopSession(sessionID, false)
+			hlsMgr.StopSession(u.UserID, sessionID, false)
 		}
 		prog, _ := store.GetProgress(u.UserID, fileID)
 
@@ -341,18 +404,23 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 	}))
 
 	mux.HandleFunc("POST /api/stream/stop", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		u := auth.GetUser(r)
 		sessionID := strings.TrimSpace(r.URL.Query().Get("session"))
 		if sessionID == "" && r.Body != nil {
 			var body struct {
 				Session string `json:"session"`
 			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+			if err := decodeJSON(w, r, &body); err == nil {
 				sessionID = strings.TrimSpace(body.Session)
 			}
 		}
+		if sessionID != "" && !stream.ValidateSessionID(sessionID) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "無效的 Session ID"})
+			return
+		}
 		stopped := false
 		if sessionID != "" {
-			stopped = hlsMgr.StopSession(sessionID, true)
+			stopped = hlsMgr.StopSession(u.UserID, sessionID, true)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":  "stopped",
@@ -385,19 +453,34 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 			http.Error(w, "找不到影片", http.StatusNotFound)
 			return
 		}
-		sessionID := r.URL.Query().Get("session")
+		sessionID := strings.TrimSpace(r.URL.Query().Get("session"))
 		if sessionID == "" {
 			sessionID = "default"
+		}
+		if !stream.ValidateSessionID(sessionID) {
+			http.Error(w, "無效的 Session ID", http.StatusBadRequest)
+			return
 		}
 		mode := r.URL.Query().Get("mode")
 		if mode == "" {
 			mode = "transcode"
 		}
+		if !stream.ValidateMode(mode) {
+			http.Error(w, "無效的串流模式", http.StatusBadRequest)
+			return
+		}
 		quality := r.URL.Query().Get("quality")
 		if quality == "" {
 			quality = "original"
 		}
+		if !stream.ValidateQuality(quality) {
+			http.Error(w, "無效的畫質參數", http.StatusBadRequest)
+			return
+		}
 		audioTrack, _ := strconv.Atoi(r.URL.Query().Get("audio"))
+		if audioTrack < 0 {
+			audioTrack = 0
+		}
 
 		playlist := hlsMgr.GenerateVirtualPlaylist(media, sessionID, mode, quality, audioTrack)
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
@@ -406,6 +489,7 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 	}))
 
 	mux.HandleFunc("GET /api/stream/{id}/hls/{seg}", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		u := auth.GetUser(r)
 		fileID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
 			http.Error(w, "無效的影片 ID", http.StatusBadRequest)
@@ -428,28 +512,52 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 			return
 		}
 
-		sessionID := r.URL.Query().Get("session")
+		sessionID := strings.TrimSpace(r.URL.Query().Get("session"))
 		if sessionID == "" {
 			sessionID = "default"
+		}
+		if !stream.ValidateSessionID(sessionID) {
+			http.Error(w, "無效的 Session ID", http.StatusBadRequest)
+			return
 		}
 		mode := r.URL.Query().Get("mode")
 		if mode == "" {
 			mode = "transcode"
 		}
+		if !stream.ValidateMode(mode) {
+			http.Error(w, "無效的串流模式", http.StatusBadRequest)
+			return
+		}
 		quality := r.URL.Query().Get("quality")
 		if quality == "" {
 			quality = "original"
 		}
+		if !stream.ValidateQuality(quality) {
+			http.Error(w, "無效的畫質參數", http.StatusBadRequest)
+			return
+		}
 		audioTrack, _ := strconv.Atoi(r.URL.Query().Get("audio"))
+		if audioTrack < 0 {
+			audioTrack = 0
+		}
 		seekSeq := r.URL.Query().Get("seek")
 
-		segPath, err := hlsMgr.EnsureSegmentReady(r.Context(), sessionID, media, mode, quality, audioTrack, segIdx, seekSeq)
+		segPath, err := hlsMgr.EnsureSegmentReady(r.Context(), u.UserID, sessionID, media, mode, quality, audioTrack, segIdx, seekSeq)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusGatewayTimeout)
+			if errors.Is(err, stream.ErrInvalidSessionID) || errors.Is(err, stream.ErrInvalidStreamParam) || errors.Is(err, stream.ErrSegmentOutOfRange) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if errors.Is(err, stream.ErrTooManySessions) {
+				http.Error(w, err.Error(), http.StatusTooManyRequests)
+				return
+			}
+			fmt.Printf("[API] 取得轉碼切片失敗 (file=%d, seg=%d): %v\n", fileID, segIdx, err)
+			http.Error(w, "轉碼切片逾時或發生錯誤", http.StatusGatewayTimeout)
 			return
 		}
 
@@ -484,7 +592,7 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 		var body struct {
 			PositionSeconds float64 `json:"position_seconds"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := decodeJSON(w, r, &body); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "格式錯誤"})
 			return
 		}
@@ -525,18 +633,20 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 				return
 			}
 			fullPath := filepath.Join(cfg.WebDir, reqPath)
-			if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
-				http.ServeFile(w, r, fullPath)
-				return
+			if isSafeStaticPath(cfg.WebDir, fullPath) {
+				if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
+					http.ServeFile(w, r, fullPath)
+					return
+				}
 			}
 			serveIndexNoCache(w, r, indexFile)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte("PiStream Server is running. Please build web frontend into " + cfg.WebDir))
+		_, _ = w.Write([]byte("PiStream Server is running."))
 	})
 
-	return mux
+	return withSecurityMiddleware(mux)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
