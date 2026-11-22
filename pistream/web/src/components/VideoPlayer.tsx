@@ -280,6 +280,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
   // 1. 取得串流決策（初次進入或切換畫質/音軌/三段式降級時觸發）
   useEffect(() => {
     let isMounted = true;
+    // 切換畫質、音軌或串流模式前立刻銷毀舊的 hls.js 實例，中止仍在途中的舊切片請求，避免與後端 StopSession 競爭
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
     const allowHEVCDirect = detectHEVCDirectSupport() && !forceTranscode;
     const allowHEVCHls = detectHEVCHlsSupport() && !forceTranscode;
     const allowEAC3 = detectEAC3Support() && !forceTranscode;

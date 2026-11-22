@@ -134,11 +134,13 @@ type HLSSession struct {
 	StartSeg       int
 	CurrentHeadSeg int
 	LastActive     time.Time
+	ProcessCtx     context.Context
 	CancelFunc     context.CancelFunc
 	Cmd            *exec.Cmd
 	ProcessDone    chan struct{}
 	IsPaused       bool
 	DisableHwAccel bool
+	Terminated     bool
 	mu             sync.Mutex
 }
 
@@ -202,7 +204,57 @@ func (m *HLSManager) StopSession(ownerUserID int64, sessionID string, tombstone 
 	return true
 }
 
+// StopSessionIfConfigMismatch 當使用者在同一個 Session 切換影片、模式（例如 1080p 轉碼 -> 原畫 Remux）、畫質或音軌時，
+// 立刻終止舊參數的 FFmpeg 行程並移出管理表，避免舊轉碼在載入新 M3U8 期間繼續消耗 CPU。
+func (m *HLSManager) StopSessionIfConfigMismatch(ownerUserID int64, sessionID string, mediaID int64, mode, quality string, audioTrack int) bool {
+	if !ValidateSessionID(sessionID) {
+		return false
+	}
+	key := sessionKey(ownerUserID, sessionID)
+
+	m.mu.Lock()
+	sess, exists := m.sessions[key]
+	if !exists {
+		m.mu.Unlock()
+		return false
+	}
+	sess.mu.Lock()
+	mismatch := sess.Media == nil || sess.Media.ID != mediaID ||
+		sess.Mode != mode || sess.Quality != quality || sess.AudioTrack != audioTrack
+	sess.mu.Unlock()
+	if !mismatch {
+		m.mu.Unlock()
+		return false
+	}
+	delete(m.sessions, key)
+	m.mu.Unlock()
+
+	sess.mu.Lock()
+	fmt.Printf("[HLSManager] 切換串流模式/畫質，主動回收舊 Session: %s\n", key)
+	m.terminateSessionLocked(sess)
+	sess.mu.Unlock()
+	return true
+}
+
+// StopAllSessions 於伺服器優雅關閉時立即終止所有活躍中的 FFmpeg 行程並清理暫存目錄。
+func (m *HLSManager) StopAllSessions() {
+	m.mu.Lock()
+	sessions := make([]*HLSSession, 0, len(m.sessions))
+	for key, sess := range m.sessions {
+		sessions = append(sessions, sess)
+		delete(m.sessions, key)
+	}
+	m.mu.Unlock()
+
+	for _, sess := range sessions {
+		sess.mu.Lock()
+		m.terminateSessionLocked(sess)
+		sess.mu.Unlock()
+	}
+}
+
 func (m *HLSManager) terminateSessionLocked(sess *HLSSession) {
+	sess.Terminated = true
 	if sess.CancelFunc != nil {
 		m.resumeFFmpegLocked(sess)
 		sess.CancelFunc()
@@ -214,6 +266,9 @@ func (m *HLSManager) terminateSessionLocked(sess *HLSSession) {
 		}
 		sess.CancelFunc = nil
 	}
+	sess.ProcessCtx = nil
+	sess.ProcessDone = nil
+	sess.Cmd = nil
 	if sess.OutputDir != "" && isSubpath(m.cfg.TranscodeTempDir, sess.OutputDir) {
 		_ = os.RemoveAll(sess.OutputDir)
 	}
@@ -359,6 +414,10 @@ func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, ownerUserID int6
 	nextSegPath := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", segIndex+1))
 
 	sess.mu.Lock()
+	if sess.Terminated {
+		sess.mu.Unlock()
+		return "", context.Canceled
+	}
 	sess.LastActive = time.Now()
 
 	// 若切換了畫質或音軌，或前端觸發了跨緩衝區跳轉 (seekSeq 變更)，強制清除舊切片並重啟 FFmpeg；
@@ -416,7 +475,12 @@ func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, ownerUserID int6
 		}
 	}
 
+	if sess.Terminated {
+		sess.mu.Unlock()
+		return "", context.Canceled
+	}
 	procDone := sess.ProcessDone
+	procCtx := sess.ProcessCtx
 	sess.mu.Unlock()
 
 	timeout := time.After(12 * time.Second)
@@ -431,11 +495,11 @@ func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, ownerUserID int6
 			return "", fmt.Errorf("等待轉碼切片 seg_%05d.ts 逾時", segIndex)
 		case <-ticker.C:
 			sess.mu.Lock()
-			sess.LastActive = time.Now()
-			if sess.ProcessDone != procDone {
+			if sess.Terminated || sess.ProcessDone != procDone {
 				sess.mu.Unlock()
 				return "", context.Canceled
 			}
+			sess.LastActive = time.Now()
 			if isSegmentComplete(targetSegPath, nextSegPath, procDone) {
 				if segIndex > sess.CurrentHeadSeg {
 					sess.CurrentHeadSeg = segIndex
@@ -445,15 +509,22 @@ func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, ownerUserID int6
 				return targetSegPath, nil
 			}
 			if isProcessExited(procDone) {
-				if sess.Mode == "transcode" && !sess.DisableHwAccel && m.cfg.HwAccel != "" {
+				// 僅在 Session 仍存活且行程非主動取消（非 StopSession / 切換模式 / 回收）時，才視為硬體加速失敗並回退至 CPU 軟解，
+				// 徹底杜絕已回收 Session 被遲到切片請求喚醒而在 m.sessions 之外產生無法管理的孤兒 100% CPU FFmpeg 行程。
+				wasCanceled := procCtx != nil && procCtx.Err() != nil
+				if !sess.Terminated && !wasCanceled && sess.Mode == "transcode" && !sess.DisableHwAccel && m.cfg.HwAccel != "" && reqCtx.Err() == nil {
 					fmt.Printf("[HLSManager] Session=%s 硬體加速 (%s) 啟動失敗，自動回退至 CPU 軟解轉碼\n", sess.SessionID, m.cfg.HwAccel)
 					sess.DisableHwAccel = true
 					m.restartFFmpegLocked(sess, segIndex)
 					procDone = sess.ProcessDone
+					procCtx = sess.ProcessCtx
 					sess.mu.Unlock()
 					continue
 				}
 				sess.mu.Unlock()
+				if sess.Terminated || wasCanceled {
+					return "", context.Canceled
+				}
 				return "", fmt.Errorf("FFmpeg 已結束但未能產生切片 seg_%05d.ts", segIndex)
 			}
 			sess.mu.Unlock()
@@ -462,11 +533,17 @@ func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, ownerUserID int6
 }
 
 func (m *HLSManager) restartFFmpegLocked(sess *HLSSession, startSeg int) {
+	if sess.Terminated {
+		return
+	}
 	if sess.CancelFunc != nil {
 		m.resumeFFmpegLocked(sess)
 		sess.CancelFunc()
 		if sess.ProcessDone != nil {
-			<-sess.ProcessDone
+			select {
+			case <-sess.ProcessDone:
+			case <-time.After(2 * time.Second):
+			}
 		}
 	}
 
@@ -478,6 +555,7 @@ func (m *HLSManager) restartFFmpegLocked(sess *HLSSession, startSeg int) {
 	m.clearAllSegmentsLocked(sess)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	sess.ProcessCtx = ctx
 	sess.CancelFunc = cancel
 	sess.StartSeg = startSeg
 	sess.CurrentHeadSeg = startSeg
@@ -703,7 +781,7 @@ func (m *HLSManager) throttleLoop() {
 
 		for _, sess := range sessions {
 			sess.mu.Lock()
-			if !sess.IsPaused && sess.Cmd != nil && !isProcessExited(sess.ProcessDone) && sess.CurrentHeadSeg >= 0 {
+			if !sess.Terminated && !sess.IsPaused && sess.Cmd != nil && !isProcessExited(sess.ProcessDone) && sess.CurrentHeadSeg >= 0 {
 				highWaterSeg := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+highWater))
 				highWaterNext := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+highWater+1))
 				if isSegmentComplete(highWaterSeg, highWaterNext, sess.ProcessDone) {

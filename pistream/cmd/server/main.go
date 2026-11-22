@@ -87,6 +87,9 @@ func main() {
 	<-stop
 	fmt.Println("\n正在關閉 PiStream 伺服器...")
 	cancel()
+	if hlsMgr != nil {
+		hlsMgr.StopAllSessions()
+	}
 	if watcher != nil {
 		_ = watcher.Close()
 	}

@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"pistream/internal/config"
 	"pistream/internal/db"
@@ -648,4 +650,105 @@ func TestHLSManagerStopAndRecreateDirIsolation(t *testing.T) {
 	if _, err := os.Stat(dir2); err != nil {
 		t.Fatalf("預期新目錄 dir2 不受舊 Session 清理影響而保留，實際錯誤: %v", err)
 	}
+}
+
+func TestHLSManagerStopDoesNotSpawnOrphanHwAccelFallback(t *testing.T) {
+	tempDir := t.TempDir()
+	mgr := NewHLSManager(&config.Config{
+		TranscodeTempDir: tempDir,
+		SegmentDuration:  4,
+		MaxKeepSegments:  10,
+		HwAccel:          "drm",
+	})
+	media := &db.MediaFile{
+		ID:              7794,
+		FilePath:        filepath.Join(tempDir, "movie_hevc.mp4"),
+		DurationSeconds: 7200,
+		VideoCodec:      "hevc",
+	}
+
+	// 1. 建立正在以 drm 硬解執行的 transcode Session（以可控制 ctx/done 模擬活著的 FFmpeg，無需實際啟動外部程式）
+	sess, err := mgr.getOrCreateSession(2, "sess_orphan_test", media, "transcode", "1080p", 0)
+	if err != nil {
+		t.Fatalf("建立 Session 失敗: %v", err)
+	}
+	procCtx, cancel := context.WithCancel(context.Background())
+	procDone := make(chan struct{})
+	go func() {
+		<-procCtx.Done()
+		close(procDone)
+	}()
+
+	sess.mu.Lock()
+	sess.StartSeg = 390
+	sess.CurrentHeadSeg = 420
+	sess.ProcessCtx = procCtx
+	sess.CancelFunc = cancel
+	sess.ProcessDone = procDone
+	sess.Cmd = &exec.Cmd{}
+	sess.mu.Unlock()
+
+	// 2. 模擬前端仍有在途中的切片請求 Seg=426 正在 EnsureSegmentReady 迴圈中等待
+	errCh := make(chan error, 1)
+	go func() {
+		_, waitErr := mgr.EnsureSegmentReady(context.Background(), 2, "sess_orphan_test", media, "transcode", "1080p", 0, 426, "")
+		errCh <- waitErr
+	}()
+
+	// 稍候讓 EnsureSegmentReady 進入輪詢等待迴圈
+	time.Sleep(80 * time.Millisecond)
+
+	// 3. 模擬使用者切回原畫 (Direct -> Remux) 或退出播放器觸發 StopSession
+	if stopped := mgr.StopSession(2, "sess_orphan_test", false); !stopped {
+		t.Fatalf("預期 StopSession 回傳 true")
+	}
+
+	select {
+	case waitErr := <-errCh:
+		if !errors.Is(waitErr, context.Canceled) {
+			t.Fatalf("預期 EnsureSegmentReady 因 Session 被主動終止而回傳 context.Canceled，實際: %v", waitErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("等待 EnsureSegmentReady 結束逾時")
+	}
+
+	// 4. 核心斷言：絕不可誤判為 drm 啟動失敗而回退 CPU 軟解，亦不可在 m.sessions 之外重新啟動孤兒 FFmpeg 或重建暫存目錄
+	sess.mu.Lock()
+	terminated := sess.Terminated
+	disabledHw := sess.DisableHwAccel
+	orphanCmd := sess.Cmd
+	orphanDone := sess.ProcessDone
+	outDir := sess.OutputDir
+	sess.mu.Unlock()
+
+	if !terminated {
+		t.Fatalf("預期舊 Session 已標記 Terminated=true")
+	}
+	if disabledHw {
+		t.Fatalf("主動停止 Session 不得誤判為硬體加速失敗而設定 DisableHwAccel=true")
+	}
+	if orphanCmd != nil || orphanDone != nil {
+		t.Fatalf("已回收的 Session 不得重新啟動孤兒 FFmpeg 行程 (Cmd=%v, ProcessDone=%v)", orphanCmd, orphanDone)
+	}
+	if _, statErr := os.Stat(outDir); !os.IsNotExist(statErr) {
+		t.Fatalf("已回收的 Session 暫存目錄不得被孤兒流程重建: %s", outDir)
+	}
+
+	// 5. 驗證 StopSessionIfConfigMismatch：相同設定保留、切換模式（transcode -> remux）時立刻回收
+	sess2, err := mgr.getOrCreateSession(2, "sess_switch_test", media, "transcode", "1080p", 0)
+	if err != nil {
+		t.Fatalf("建立 sess2 失敗: %v", err)
+	}
+	if mgr.StopSessionIfConfigMismatch(2, "sess_switch_test", media.ID, "transcode", "1080p", 0) {
+		t.Fatalf("相同影片與參數不應觸發回收")
+	}
+	if !mgr.StopSessionIfConfigMismatch(2, "sess_switch_test", media.ID, "remux", "original", 0) {
+		t.Fatalf("從 transcode/1080p 切換為 remux/original 時應立即回收舊 Session")
+	}
+	sess2.mu.Lock()
+	if !sess2.Terminated {
+		sess2.mu.Unlock()
+		t.Fatalf("預期被 StopSessionIfConfigMismatch 回收的 Session 已標記 Terminated=true")
+	}
+	sess2.mu.Unlock()
 }
