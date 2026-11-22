@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.6
+
+- **Three-Stage Automatic Playback Fallback (`Direct Play` → `Remux` → `1080p` H.264 Transcode)**:
+  - Added `<video>` `error` (`MEDIA_ERR_DECODE` / `MEDIA_ERR_SRC_NOT_SUPPORTED`) and playback-stall watchdog handling for `Direct Play` in `VideoPlayer.tsx` so MP4 files rejected by strict native browser demuxers (e.g. Firefox `MEDIA_ERR_DECODE` on non-standard HEVC MP4 containers) never spin indefinitely on "定位畫面中".
+  - Added `force_remux` and `force_transcode` support to `GET /api/stream/{id}/info` and `DecideStreamModeWithOptions()` (`internal/stream/decision.go`): when `Direct Play` fails, PiStream automatically retries original-quality zero-reencode `Remux` (`-c:v copy`, ~1–3% Pi 5 CPU) first; if `Remux` also hits fatal `MEDIA_ERROR`, it automatically falls back to `1080p` H.264 transcoding (bypassing `Smart 1080p Bypass`).
+  - Added an explicit **`畫質：1080p 兼容轉碼`** option to the player quality menu so users can manually force 1080p H.264 transcoding at any time without having to drop down to 720p.
+
 ## 1.0.5
 
 - **Jellyfin-Style Custom HTML Subtitle Overlay (with Automatic PiP / iOS Native `<track>` Fallback)**:

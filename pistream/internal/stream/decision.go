@@ -66,13 +66,46 @@ func DecideStreamModeWithCaps(media *db.MediaFile, sessionID string, quality str
 	return DecideStreamModeWithAllCaps(media, sessionID, quality, audioTrack, allowHEVCDirect, allowHEVCHLS, false)
 }
 
+type StreamCaps struct {
+	AllowHEVCDirect bool
+	AllowHEVCHLS    bool
+	AllowEAC3       bool
+	ForceRemux      bool // 跳過 Direct Play，優先改走免重編碼 Remux（不支援時回退 transcode）
+	ForceTranscode  bool // 跳過 Direct Play 與 Remux / Smart 1080p Bypass，強制走 Tier 3 H.264 轉碼
+}
+
 // DecideStreamModeWithAllCaps 同時考量 Direct Play HEVC、HLS MSE HEVC 與瀏覽器原生 EAC3 支援度
 func DecideStreamModeWithAllCaps(media *db.MediaFile, sessionID string, quality string, audioTrack int, allowHEVCDirect bool, allowHEVCHLS bool, allowEAC3 bool) DecisionResult {
+	return DecideStreamModeWithOptions(media, sessionID, quality, audioTrack, StreamCaps{
+		AllowHEVCDirect: allowHEVCDirect,
+		AllowHEVCHLS:    allowHEVCHLS,
+		AllowEAC3:       allowEAC3,
+	})
+}
+
+// DecideStreamModeWithOptions 支援三段式降級（Direct Play -> ForceRemux -> ForceTranscode）之完整串流決策
+func DecideStreamModeWithOptions(media *db.MediaFile, sessionID string, quality string, audioTrack int, caps StreamCaps) DecisionResult {
 	if quality == "" {
 		quality = "original"
 	}
 	if audioTrack < 0 {
 		audioTrack = 0
+	}
+
+	if caps.ForceTranscode {
+		transQuality := quality
+		if transQuality == "original" {
+			transQuality = "1080p"
+		}
+		return DecisionResult{
+			Mode:       "transcode",
+			Quality:    transQuality,
+			AudioTrack: audioTrack,
+			StreamURL: fmt.Sprintf(
+				"/api/stream/%d/hls/index.m3u8?session=%s&mode=transcode&quality=%s&audio=%d",
+				media.ID, sessionID, transQuality, audioTrack,
+			),
+		}
 	}
 
 	vCodec := strings.ToLower(media.VideoCodec)
@@ -81,15 +114,15 @@ func DecideStreamModeWithAllCaps(media *db.MediaFile, sessionID string, quality 
 
 	isH264 := vCodec == "h264" || vCodec == "avc1"
 	isHEVC := vCodec == "hevc" || vCodec == "h265"
-	videoSupportedDirect := isH264 || vCodec == "vp9" || vCodec == "av1" || (isHEVC && allowHEVCDirect)
-	videoSupportedRemux := isH264 || (isHEVC && allowHEVCHLS)
-	audioSupportedDirect := isBrowserNativeAudioWithCaps(aCodec, allowEAC3)
+	videoSupportedDirect := isH264 || vCodec == "vp9" || vCodec == "av1" || (isHEVC && caps.AllowHEVCDirect)
+	videoSupportedRemux := isH264 || (isHEVC && caps.AllowHEVCHLS)
+	audioSupportedDirect := isBrowserNativeAudioWithCaps(aCodec, caps.AllowEAC3)
 
 	// 若使用者主動選擇「原畫極速 (original)」
 	if quality == "original" {
 		// Tier 1: HTTP 206 Partial Content 原生直連 (0% CPU，中間時段毫秒級跳轉)
-		// 條件：相容容器 (MP4/WebM/MOV)、使用預設第一音軌、音訊為瀏覽器原生支援，且視訊為 H.264/VP9/AV1 或瀏覽器支援之 HEVC
-		if audioTrack == 0 && isDirectPlayContainer(container) && videoSupportedDirect && audioSupportedDirect {
+		// 條件：未要求 ForceRemux、相容容器 (MP4/WebM/MOV)、預設第一音軌、原生支援音訊與視訊
+		if !caps.ForceRemux && audioTrack == 0 && isDirectPlayContainer(container) && videoSupportedDirect && audioSupportedDirect {
 			return DecisionResult{
 				Mode:       "direct",
 				Quality:    "original",
@@ -99,7 +132,7 @@ func DecideStreamModeWithAllCaps(media *db.MediaFile, sessionID string, quality 
 		}
 
 		// Tier 2: Zero-Reencode Remux (-c:v copy 免重編碼極速換殼，僅轉換音軌與容器)
-		// 條件：視訊為 H.264，或瀏覽器支援硬解之 HEVC（例如 4K/1080p HEVC + EAC3/AC3/DTS，或多音軌切換）
+		// 條件：視訊為 H.264，或瀏覽器支援硬解之 HEVC（例如 4K/1080p HEVC + EAC3/AC3/DTS、多音軌切換，或 Direct Play 解碼失敗自動降級）
 		if videoSupportedRemux {
 			return DecisionResult{
 				Mode:       "remux",
@@ -120,7 +153,7 @@ func DecideStreamModeWithAllCaps(media *db.MediaFile, sessionID string, quality 
 	if quality == "1080p" && media.Width > 0 && media.Width <= 1920 && (media.Height == 0 || media.Height <= 1088) {
 		bitRate := effectiveBitRate(media)
 		if bitRate >= 0 && bitRate <= 8_000_000 {
-			if audioTrack == 0 && isDirectPlayContainer(container) && videoSupportedDirect && audioSupportedDirect {
+			if !caps.ForceRemux && audioTrack == 0 && isDirectPlayContainer(container) && videoSupportedDirect && audioSupportedDirect {
 				return DecisionResult{
 					Mode:       "direct",
 					Quality:    "1080p",

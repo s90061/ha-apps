@@ -160,9 +160,11 @@ export const api = {
     allowHEVCDirect: boolean,
     allowHEVCHls: boolean = allowHEVCDirect,
     allowEAC3: boolean = false,
+    forceRemux: boolean = false,
+    forceTranscode: boolean = false,
   ) =>
     request<StreamInfo>(
-      `/api/stream/${fileId}/info?session=${encodeURIComponent(session)}&quality=${encodeURIComponent(quality)}&audio=${audioTrack}&hevc=${allowHEVCDirect ? '1' : '0'}&hevc_hls=${allowHEVCHls ? '1' : '0'}&eac3=${allowEAC3 ? '1' : '0'}`,
+      `/api/stream/${fileId}/info?session=${encodeURIComponent(session)}&quality=${encodeURIComponent(quality)}&audio=${audioTrack}&hevc=${allowHEVCDirect ? '1' : '0'}&hevc_hls=${allowHEVCHls ? '1' : '0'}&eac3=${allowEAC3 ? '1' : '0'}${forceRemux ? '&force_remux=1' : ''}${forceTranscode ? '&force_transcode=1' : ''}`,
     ),
 
   reportProgress: (fileId: number, positionSeconds: number) =>
