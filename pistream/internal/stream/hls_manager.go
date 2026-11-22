@@ -322,6 +322,10 @@ func (m *HLSManager) getOrCreateSession(ownerUserID int64, sessionID string, med
 	var evicted *HLSSession
 
 	m.mu.Lock()
+	if _, stopped := m.stoppedSessions[key]; stopped {
+		m.mu.Unlock()
+		return nil, context.Canceled
+	}
 	if sess, exists := m.sessions[key]; exists {
 		sess.LastActive = time.Now()
 		m.mu.Unlock()

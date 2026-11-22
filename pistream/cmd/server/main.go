@@ -54,6 +54,10 @@ func main() {
 	fmt.Printf("🚀 RAM Disk 轉碼區: %s\n", cfg.TranscodeTempDir)
 	fmt.Printf("👤 預設管理員帳號: %s\n", cfg.AdminUser)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scanner.SetThumbnailContext(ctx)
+
 	// 背景執行初次掃描與縮圖排程，確保 HTTP 伺服器與 Docker 健康檢查秒開
 	go func() {
 		count, err := scanner.ScanDirectory(cfg.MediaDir, cfg.CacheDir, store)
@@ -63,9 +67,6 @@ func main() {
 		}
 		fmt.Printf("📚 媒體庫掃描完成，已索引 %d 部影片\n", count)
 	}()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	watcher, err := scanner.NewLibraryWatcher(cfg.MediaDir, cfg.CacheDir, store)
 	if err == nil {

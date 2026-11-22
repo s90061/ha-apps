@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.10
+
+- **3–10× Faster Background Thumbnail Generation & Stall Protection**:
+  - Enabled `-noaccurate_seek` before `-ss` for videos longer than 30 seconds in `internal/scanner/thumbnail.go` so FFmpeg decodes only a single keyframe instead of hundreds of discarded intermediate frames per thumbnail (dramatically speeding up library thumbnail rebuilds after switching `media_dir` and slashing total CPU work), while preserving accurate seeking for short clips (`<= 30s`) to avoid landing on `0s` black frames.
+  - Added a 15-second per-job `exec.CommandContext` timeout (protecting against incomplete/corrupted downloads in folders such as `/share/qBittorrent`), graceful shutdown cancellation via `SetThumbnailContext()`, and a completion log summary when new thumbnails finish generating.
+- **Closed `HLSManager` Tombstone TOCTOU Window**:
+  - Re-checked `m.stoppedSessions[key]` while holding `m.mu.Lock()` inside `getOrCreateSession()` (`internal/stream/hls_manager.go`) so an in-flight segment request racing with `StopSession(..., true)` can never recreate a tombstoned session.
+
 ## 1.0.9
 
 - **Auto-Reset Watch History & Media Index When `media_dir` Changes**:
