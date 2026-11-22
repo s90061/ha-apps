@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.5
+
+- **Jellyfin-Style Custom HTML Subtitle Overlay (with Automatic PiP / iOS Native `<track>` Fallback)**:
+  - Replaced native `video::cue` rendering on desktop browsers with a dedicated React HTML `<div>` subtitle overlay (`SubtitleOverlay.tsx`), keeping `<track mode="hidden">` as the WebVTT parser and timeline engine so subtitle styling, sizing, multi-line `box-decoration-break: clone` dark pills, and smooth GPU-composited `translateY` control-bar avoidance are 100% consistent across Firefox, Chrome, Edge, and Safari without mutating `VTTCue.line` or toggling `track.mode`.
+  - Safely parses WebVTT inline formatting (`<i>`, `<b>`, `<u>`, `<ruby>`, `<rt>`, `<br>`) via `cue.getCueAsHTML()` AST traversal (zero `dangerouslySetInnerHTML`), preserves top-pinned cues (auto-shifted below the top bar when controls are visible), and syncs immediately on `cuechange`, `load`, `seeked`, `timeupdate`, and `-0.5s`/`+0.5s` offset changes.
+  - Automatically falls back to native `<track mode="showing">` when entering Picture-in-Picture (`enterpictureinpicture`) or iOS native fullscreen (`webkitbeginfullscreen`), and restores the HTML overlay on exit.
+
 ## 1.0.4
 
 - **Larger, Configurable Forward HLS Buffer (`buffer_seconds`, default `45`s, range `16`–`120`s)**:

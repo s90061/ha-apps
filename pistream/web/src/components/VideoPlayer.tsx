@@ -2,6 +2,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { ArrowLeft, Maximize2, Minimize2, Pause, Play, RotateCcw, RotateCw, Volume1, Volume2, VolumeX } from './Icons';
 import { CinemaSelect } from './CinemaSelect';
+import {
+  ActiveSubtitleCue,
+  buildActiveCuesSignature,
+  extractActiveSubtitleCues,
+  SubtitleOverlay,
+} from './SubtitleOverlay';
 import { AudioTrack, StreamInfo, SubtitleTrack } from '../types';
 import { api, detectEAC3Support, detectHEVCDirectSupport, detectHEVCHlsSupport, resolveUrl } from '../services/api';
 import { formatDuration } from './VideoCard';
@@ -58,14 +64,6 @@ function shiftWebVTT(rawVtt: string, offsetSec: number): string {
   });
 }
 
-interface OriginalCueLayout {
-  line: LineAndPositionSetting;
-  snapToLines: boolean;
-  lineAlign: LineAlignSetting;
-}
-
-const supportsVttLineAlign = typeof VTTCue !== 'undefined' && 'lineAlign' in VTTCue.prototype;
-
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -92,11 +90,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
   const rawVttRef = useRef<string | null>(null);
   const subBlobUrlRef = useRef<string | null>(null);
   const subFetchAbortRef = useRef<AbortController | null>(null);
+  const subTrackCleanupRef = useRef<(() => void) | null>(null);
+  const lastCueSigRef = useRef<string>('');
+  const useNativeSubtitleRef = useRef<boolean>(false);
+  const [useNativeSubtitle, setUseNativeSubtitle] = useState<boolean>(false);
+  const [activeSubtitleCues, setActiveSubtitleCues] = useState<ActiveSubtitleCue[]>([]);
   const seekSeqRef = useRef<number>(0);
   const explicitSeekRef = useRef<{ target: number; at: number } | null>(null);
-  const cueOriginalLayoutRef = useRef<WeakMap<TextTrackCue, OriginalCueLayout>>(new WeakMap());
-  const bottomBarVisibleRef = useRef<boolean>(true);
-  const [cueLiftPx, setCueLiftPx] = useState<number>(96);
+  const [subtitleBottomOffsetPx, setSubtitleBottomOffsetPx] = useState<number>(96);
+  const [subtitleTopOffsetPx, setSubtitleTopOffsetPx] = useState<number>(24);
   const [subtitleScale, setSubtitleScale] = useState<number>(() => {
     const saved = Number(localStorage.getItem('pistream_subtitle_scale'));
     return saved >= 75 && saved <= 220 ? saved : 100;
@@ -107,7 +109,42 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     localStorage.setItem('pistream_subtitle_scale', String(scale));
   };
 
+  const syncActiveSubtitleCues = (video: HTMLVideoElement | null, force = false) => {
+    if (!video || !video.textTracks || video.textTracks.length === 0) {
+      if (force || lastCueSigRef.current !== '') {
+        lastCueSigRef.current = '';
+        setActiveSubtitleCues([]);
+      }
+      return;
+    }
+    let activeTrack: TextTrack | null = null;
+    for (let i = 0; i < video.textTracks.length; i++) {
+      const t = video.textTracks[i];
+      if (t.mode === 'hidden' || t.mode === 'showing') {
+        activeTrack = t;
+        break;
+      }
+    }
+    if (!activeTrack || useNativeSubtitleRef.current) {
+      if (force || lastCueSigRef.current !== '') {
+        lastCueSigRef.current = '';
+        setActiveSubtitleCues([]);
+      }
+      return;
+    }
+    const sig = buildActiveCuesSignature(activeTrack.activeCues);
+    if (!force && sig === lastCueSigRef.current) {
+      return;
+    }
+    lastCueSigRef.current = sig;
+    setActiveSubtitleCues(extractActiveSubtitleCues(activeTrack.activeCues));
+  };
+
   const clearSubtitleTracks = (video: HTMLVideoElement | null) => {
+    if (subTrackCleanupRef.current) {
+      subTrackCleanupRef.current();
+      subTrackCleanupRef.current = null;
+    }
     if (video) {
       // 先將現存 TextTrack 設為 disabled，強制瀏覽器立刻從 CueTimeline 與 Shadow DOM 卸載，徹底杜絕字幕殘留
       if (video.textTracks) {
@@ -124,76 +161,33 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
       URL.revokeObjectURL(subBlobUrlRef.current);
       subBlobUrlRef.current = null;
     }
+    lastCueSigRef.current = '';
+    setActiveSubtitleCues([]);
   };
 
-  const syncCuePositionAboveControls = (video: HTMLVideoElement | null, raiseAboveControls: boolean) => {
-    if (!video) return;
-    const vRect = video.getBoundingClientRect();
-    const seekRect = seekBarRef.current?.getBoundingClientRect();
-    const clearancePx =
-      raiseAboveControls && seekRect && vRect.height > 0 && seekRect.top > vRect.top
-        ? Math.max(96, Math.round(vRect.bottom - seekRect.top + 18))
-        : 96;
+  const syncSubtitleClearance = (controlsShown: boolean) => {
+    const containerRect = containerRef.current?.getBoundingClientRect();
+    if (!containerRect || containerRect.height <= 0) return;
 
-    if (!supportsVttLineAlign) {
-      if (raiseAboveControls) {
-        setCueLiftPx(clearancePx);
-      }
+    if (!controlsShown) {
+      setSubtitleBottomOffsetPx(24);
+      setSubtitleTopOffsetPx(24);
       return;
     }
 
-    if (!video.textTracks || video.textTracks.length === 0) return;
-    const videoHeight = vRect.height || window.innerHeight || 720;
-    const safeLinePct = Math.max(50, Math.min(90, Math.floor(((videoHeight - clearancePx) / videoHeight) * 100)));
+    const seekRect = seekBarRef.current?.getBoundingClientRect();
+    const bottomClearance =
+      seekRect && seekRect.top > containerRect.top
+        ? Math.max(96, Math.round(containerRect.bottom - seekRect.top + 22))
+        : 96;
+    setSubtitleBottomOffsetPx(bottomClearance);
 
-    for (let t = 0; t < video.textTracks.length; t++) {
-      const track = video.textTracks[t];
-      if (track.mode !== 'showing' || !track.cues || track.cues.length === 0) continue;
-      let changed = false;
-      for (let i = 0; i < track.cues.length; i++) {
-        const cue = track.cues[i] as VTTCue;
-        if (!('line' in cue) || !('snapToLines' in cue) || !('lineAlign' in cue)) continue;
-        let orig = cueOriginalLayoutRef.current.get(cue);
-        if (!orig) {
-          orig = {
-            line: cue.line,
-            snapToLines: cue.snapToLines,
-            lineAlign: cue.lineAlign,
-          };
-          cueOriginalLayoutRef.current.set(cue, orig);
-        }
-        // 保留明確定位於畫面上半部的字幕（如歌詞／標題註解），只抬升底部對白字幕
-        const isTopPinned =
-          typeof orig.line === 'number' &&
-          ((orig.snapToLines && orig.line >= 0 && orig.line < 5) || (!orig.snapToLines && orig.line < 50));
-        if (isTopPinned) continue;
-
-        try {
-          if (raiseAboveControls) {
-            if (cue.snapToLines !== false || cue.lineAlign !== 'end' || cue.line !== safeLinePct) {
-              cue.snapToLines = false;
-              cue.lineAlign = 'end';
-              cue.line = safeLinePct;
-              changed = true;
-            }
-          } else {
-            if (cue.snapToLines !== orig.snapToLines || cue.lineAlign !== orig.lineAlign || cue.line !== orig.line) {
-              cue.snapToLines = orig.snapToLines;
-              cue.lineAlign = orig.lineAlign;
-              cue.line = orig.line;
-              changed = true;
-            }
-          }
-        } catch {
-          // ignore browser-specific VTTCue layout assignment errors
-        }
-      }
-      // Firefox 變更活躍中 VTTCue.line 後需切換一次 mode 以立即重繪定位
-      if (changed && track.activeCues && track.activeCues.length > 0) {
-        track.mode = 'hidden';
-        track.mode = 'showing';
-      }
-    }
+    const topRect = topBarRef.current?.getBoundingClientRect();
+    const topClearance =
+      topRect && topRect.bottom > containerRect.top
+        ? Math.max(24, Math.round(topRect.bottom - containerRect.top))
+        : 76;
+    setSubtitleTopOffsetPx(topClearance);
   };
 
   const mountSubtitleFromRawVtt = (rawVtt: string, offsetSec: number) => {
@@ -207,26 +201,39 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     const blobUrl = URL.createObjectURL(blob);
     subBlobUrlRef.current = blobUrl;
 
+    // 效法 Jellyfin Web SRT/VTT 做法：桌面瀏覽器掛載 <track> 為 hidden 模式借用原生 WebVTT 解析與時間軸事件，
+    // 由 React HTML <div> 疊層（SubtitleOverlay）渲染字幕；進入 PiP 或 iOS 原生全螢幕時自動切回 showing 模式。
     const track = document.createElement('track');
     track.kind = 'subtitles';
     track.src = blobUrl;
     track.srclang = 'zh';
     track.label = '字幕';
-    track.default = true;
-    track.addEventListener(
-      'load',
-      () => {
-        if (track.track) {
-          track.track.mode = 'showing';
-          syncCuePositionAboveControls(videoRef.current, bottomBarVisibleRef.current);
-        }
-      },
-      { once: true },
-    );
+    track.default = false;
+
+    const onCueChange = () => {
+      syncActiveSubtitleCues(videoRef.current);
+    };
+    const applyTrackMode = () => {
+      if (!track.track) return;
+      track.track.mode = useNativeSubtitleRef.current ? 'showing' : 'hidden';
+      syncActiveSubtitleCues(videoRef.current, true);
+      window.requestAnimationFrame(() => {
+        syncActiveSubtitleCues(videoRef.current, true);
+      });
+    };
+
+    track.addEventListener('load', applyTrackMode, { once: true });
     video.appendChild(track);
-    if (track.track) {
-      track.track.mode = 'showing';
+
+    const textTrack = track.track;
+    if (textTrack) {
+      textTrack.mode = useNativeSubtitleRef.current ? 'showing' : 'hidden';
+      textTrack.addEventListener('cuechange', onCueChange);
+      subTrackCleanupRef.current = () => {
+        textTrack.removeEventListener('cuechange', onCueChange);
+      };
     }
+    syncActiveSubtitleCues(video, true);
   };
 
   const adjustSubtitleOffset = (deltaSec: number, reset = false) => {
@@ -1066,12 +1073,41 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
   const hideControls = isPlaying && !loading && !error && !controlsVisible && scrubTime === null;
   const bottomBarVisible = !error && !hideControls;
 
-  // 當底部控制列顯示／隱藏、或視窗與全螢幕尺寸改變時，自動將字幕上移至時間軸上方避免遮擋，隱藏時復位回底部
+  // 進入子母畫面 (PiP) 或 iOS 原生全螢幕時自動切換回原生 <track mode="showing"> 顯示字幕，離開後切回 HTML 疊層
   useEffect(() => {
-    bottomBarVisibleRef.current = bottomBarVisible;
-    syncCuePositionAboveControls(videoRef.current, bottomBarVisible);
-    if (!bottomBarVisible) return;
-    const handleResize = () => syncCuePositionAboveControls(videoRef.current, true);
+    const video = videoRef.current;
+    if (!video) return;
+    const switchNativeMode = (native: boolean) => {
+      useNativeSubtitleRef.current = native;
+      setUseNativeSubtitle(native);
+      if (video.textTracks) {
+        for (let i = 0; i < video.textTracks.length; i++) {
+          const t = video.textTracks[i];
+          if (t.mode === 'hidden' || t.mode === 'showing') {
+            t.mode = native ? 'showing' : 'hidden';
+          }
+        }
+      }
+      syncActiveSubtitleCues(video, true);
+    };
+    const onEnterNative = () => switchNativeMode(true);
+    const onLeaveNative = () => switchNativeMode(false);
+    video.addEventListener('enterpictureinpicture', onEnterNative);
+    video.addEventListener('leavepictureinpicture', onLeaveNative);
+    video.addEventListener('webkitbeginfullscreen', onEnterNative);
+    video.addEventListener('webkitendfullscreen', onLeaveNative);
+    return () => {
+      video.removeEventListener('enterpictureinpicture', onEnterNative);
+      video.removeEventListener('leavepictureinpicture', onLeaveNative);
+      video.removeEventListener('webkitbeginfullscreen', onEnterNative);
+      video.removeEventListener('webkitendfullscreen', onLeaveNative);
+    };
+  }, []);
+
+  // 當控制列顯示／隱藏或視窗與全螢幕尺寸改變時，動態量測底部時間軸與頂部控制列高度以平滑避讓字幕
+  useEffect(() => {
+    syncSubtitleClearance(bottomBarVisible);
+    const handleResize = () => syncSubtitleClearance(bottomBarVisible);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [bottomBarVisible, isFullscreen, selectedSub]);
@@ -1286,12 +1322,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
         style={
           {
             '--pistream-cue-size': `${((1.05 * subtitleScale) / 100).toFixed(2)}em`,
-            '--pistream-cue-lift': `-${cueLiftPx}px`,
           } as React.CSSProperties
         }
-        className={`w-full h-full object-contain focus:outline-none ${
-          !supportsVttLineAlign && bottomBarVisible ? 'pistream-controls-visible' : ''
-        }`}
+        className="w-full h-full object-contain focus:outline-none"
         onLoadedMetadata={() => {
           const v = videoRef.current;
           if (!v) return;
@@ -1310,6 +1343,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
             setCurrentTime(v.currentTime);
           }
           syncBufferedRange(v);
+          syncActiveSubtitleCues(v);
           if (!v.seeking && v.readyState >= 3 && v.currentTime > 0) {
             lastValidTimeRef.current = v.currentTime;
           }
@@ -1323,12 +1357,25 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onSeeking={() => setSeeking(true)}
-        onSeeked={() => setSeeking(false)}
+        onSeeked={() => {
+          setSeeking(false);
+          syncActiveSubtitleCues(videoRef.current, true);
+        }}
         onWaiting={() => setSeeking(true)}
         onPlaying={() => setSeeking(false)}
         onCanPlay={() => setSeeking(false)}
         onCanPlayThrough={() => setSeeking(false)}
       />
+
+      {/* Jellyfin 式自訂 HTML 字幕疊層（預設取代原生 video::cue，PiP／iOS 原生全螢幕自動切回原生軌道） */}
+      {!useNativeSubtitle && !error && selectedSub !== 'off' && (
+        <SubtitleOverlay
+          cues={activeSubtitleCues}
+          subtitleScale={subtitleScale}
+          bottomOffsetPx={subtitleBottomOffsetPx}
+          topOffsetPx={subtitleTopOffsetPx}
+        />
+      )}
 
       {/* Custom Bottom Control Bar（僅保留播放/暫停、進度條、時間與音量，不顯示右下角 CC 與全螢幕按鈕） */}
       {!error && (
