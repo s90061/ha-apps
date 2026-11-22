@@ -401,6 +401,9 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 		if decision.Mode == "direct" {
 			// 若由 HLS 轉碼/換殼切回原生直連 (direct)，立刻終止背景 FFmpeg 行程釋放 CPU
 			hlsMgr.StopSession(u.UserID, sessionID, false)
+		} else {
+			// 若於 HLS 模式間切換（例如 1080p 兼容轉碼 -> 原畫 Remux 或切換音軌），立刻終止舊參數之 FFmpeg 行程釋放 CPU
+			hlsMgr.StopSessionIfConfigMismatch(u.UserID, sessionID, media.ID, decision.Mode, decision.Quality, decision.AudioTrack)
 		}
 		prog, _ := store.GetProgress(u.UserID, fileID)
 

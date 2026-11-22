@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.8
+
+- **Fixed Orphaned 100%-CPU Zombie FFmpeg Process on Quality Switch or Player Exit**:
+  - Marked terminated `HLSSession` instances with `Terminated = true`, stored `ProcessCtx`, and cleared `ProcessDone` / `Cmd` inside `terminateSessionLocked()`, and guarded `EnsureSegmentReady()` and `restartFFmpegLocked()` so an in-flight segment request waking up after `StopSession()` (or eviction / idle cleanup) can never misclassify the intentional kill as a Raspberry Pi `drm` hardware-acceleration startup failure and respawn an unmonitored, unkillable CPU software-transcode (`HwAccel=none`) FFmpeg process outside `m.sessions`.
+  - Added `StopSessionIfConfigMismatch()` in `GET /api/stream/{id}/info` so switching directly between HLS modes (e.g. `1080p 兼容轉碼` → `原畫 Remux` or switching audio tracks) immediately stops the previous FFmpeg process, and added `StopAllSessions()` during graceful server shutdown.
+  - Updated `VideoPlayer.tsx` to destroy the previous `hls.js` instance immediately before requesting new stream info on quality/audio/mode changes, aborting in-flight segment downloads prior to server session teardown.
+
 ## 1.0.7
 
 - **Fixed `HLSManager` Temp Directory Race Condition (`exit status 254: No such file or directory`)**:
