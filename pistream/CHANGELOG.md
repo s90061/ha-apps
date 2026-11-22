@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.3
+
+- Automatically lift subtitles above the custom bottom timeline/control bar whenever playback controls are visible, and smoothly return them to the bottom edge when controls auto-hide:
+  - Uses bottom-anchored `VTTCue` layout (`snapToLines = false`, `lineAlign = 'end'`, dynamically calculated from live `<video>` and seek-bar geometry + immediate Firefox reflow) on Firefox & Safari while preserving top-pinned cues.
+  - Uses smooth hardware-accelerated `::-webkit-media-text-track-container` CSS translation (`--pistream-cue-lift`) on Chrome & Edge.
+
 ## 1.0.2
 
 - **Fixed Remux Timeline Seek A/V Desync & Screen Jump**:

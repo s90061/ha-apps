@@ -74,6 +74,15 @@
   transform: scale(1.15);
 }
 
+video::-webkit-media-text-track-container {
+  transform: translateY(0);
+  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+video.pistream-controls-visible::-webkit-media-text-track-container {
+  transform: translateY(var(--pistream-cue-lift, -96px));
+}
+
 video::cue {
   background-color: rgba(15, 15, 16, 0.82);
   color: #ededed;
