@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.15
+
+- Fixed `name_asc` (`檔名：A–Z`) sorting in `internal/db/sqlite.go` to sort purely by filename (`f.title COLLATE NOCASE ASC, f.id ASC`) instead of grouping by folder first, matching `name_desc` (`檔名：Z–A`) in the "All Videos" view.
+- Fixed horizontal navbar overflow on tablet (`768px`) and mobile (`375px`) viewports in `Navbar.tsx` by wrapping the search bar onto a full-width second row below `lg` (`< 1024px`) and tightening mobile button spacing/username truncation.
+
 ## 0.1.14
 
 - Removed the `jwt_secret` option from the Home Assistant Configuration UI (`config.yaml`, translations, and `DOCS.md`); the internal `HttpOnly` cookie signing key is now always automatically generated and persisted in `/config/.jwt_secret` (`chmod 600`).

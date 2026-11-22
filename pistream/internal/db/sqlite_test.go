@@ -58,3 +58,63 @@ func TestGetContinueWatchingForUserLimit4(t *testing.T) {
 		}
 	}
 }
+
+func TestListMediaFilesNameSortCrossFolder(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "pistream_sort_test.db")
+	store, err := InitDB(dbPath)
+	if err != nil {
+		t.Fatalf("InitDB failed: %v", err)
+	}
+	defer store.Conn.Close()
+
+	user, err := store.CreateUser("sorter", "hash", false)
+	if err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+
+	samples := []struct {
+		title  string
+		relDir string
+	}{
+		{"HDR_HEVC_EAC3", "4K"},
+		{"Clip_B", "Clips"},
+		{"Tiny_2MB", "Movies"},
+	}
+	for _, s := range samples {
+		if err := store.UpsertMediaFile(&MediaFile{
+			Title:           s.title,
+			FilePath:        fmt.Sprintf("/media/%s/%s.mp4", s.relDir, s.title),
+			RelPath:         fmt.Sprintf("%s/%s.mp4", s.relDir, s.title),
+			RelDir:          s.relDir,
+			FileSize:        1024,
+			Container:       "mp4",
+			VideoCodec:      "h264",
+			AudioCodec:      "aac",
+			DurationSeconds: 60,
+		}); err != nil {
+			t.Fatalf("UpsertMediaFile %s failed: %v", s.title, err)
+		}
+	}
+
+	asc, err := store.ListMediaFilesForUser(user.ID, "", "name_asc")
+	if err != nil {
+		t.Fatalf("name_asc failed: %v", err)
+	}
+	wantAsc := []string{"Clip_B", "HDR_HEVC_EAC3", "Tiny_2MB"}
+	for i, want := range wantAsc {
+		if asc[i].Title != want {
+			t.Fatalf("name_asc[%d] = %q, want %q (all=%v)", i, asc[i].Title, want, asc)
+		}
+	}
+
+	desc, err := store.ListMediaFilesForUser(user.ID, "", "name_desc")
+	if err != nil {
+		t.Fatalf("name_desc failed: %v", err)
+	}
+	wantDesc := []string{"Tiny_2MB", "HDR_HEVC_EAC3", "Clip_B"}
+	for i, want := range wantDesc {
+		if desc[i].Title != want {
+			t.Fatalf("name_desc[%d] = %q, want %q", i, desc[i].Title, want)
+		}
+	}
+}

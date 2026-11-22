@@ -28,13 +28,13 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   return (
     <header className="sticky top-0 z-30 bg-deepest border-b border-border">
-      <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
+      <div className="max-w-[1440px] mx-auto px-3 sm:px-6 py-2 lg:py-0 lg:h-14 flex flex-wrap lg:flex-nowrap items-center justify-between gap-x-2 sm:gap-x-4 gap-y-2">
         {/* Left: Brand & View Switcher */}
-        <div className="flex items-center gap-4 sm:gap-6 flex-none">
+        <div className="flex items-center gap-2 sm:gap-4 lg:gap-6 flex-none min-w-0">
           <button
             type="button"
             onClick={() => onViewModeChange('folders')}
-            className="flex items-center gap-2.5 text-left cinema-focus rounded-lg"
+            className="flex items-center gap-2 text-left cinema-focus rounded-lg flex-none"
           >
             <BrandMark size={28} />
             <span className="text-base font-medium text-ink-primary hidden sm:inline leading-none">
@@ -44,37 +44,37 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           <nav
             aria-label="瀏覽檢視"
-            className="flex items-center bg-surface border border-border rounded-lg p-1 gap-1"
+            className="flex items-center bg-surface border border-border rounded-lg p-0.5 sm:p-1 gap-0.5 sm:gap-1"
           >
             <button
               type="button"
               onClick={() => onViewModeChange('folders')}
-              className={`h-7 px-3 rounded-md text-xs font-medium flex items-center gap-2 cinema-focus transition-colors duration-150 ease-cinema ${
+              className={`h-7 px-2 sm:px-3 rounded-md text-xs font-medium flex items-center gap-1.5 sm:gap-2 cinema-focus transition-colors duration-150 ease-cinema whitespace-nowrap ${
                 viewMode === 'folders'
                   ? 'bg-raised text-ink-primary btn-highlight'
                   : 'text-ink-muted hover:text-ink-primary'
               }`}
             >
-              <Folder size={15} strokeWidth={1.5} className={viewMode === 'folders' ? 'text-accent' : 'text-ink-muted'} />
+              <Folder size={14} strokeWidth={1.5} className={`hidden min-[400px]:inline ${viewMode === 'folders' ? 'text-accent' : 'text-ink-muted'}`} />
               <span>資料夾</span>
             </button>
             <button
               type="button"
               onClick={() => onViewModeChange('all')}
-              className={`h-7 px-3 rounded-md text-xs font-medium flex items-center gap-2 cinema-focus transition-colors duration-150 ease-cinema ${
+              className={`h-7 px-2 sm:px-3 rounded-md text-xs font-medium flex items-center gap-1.5 sm:gap-2 cinema-focus transition-colors duration-150 ease-cinema whitespace-nowrap ${
                 viewMode === 'all'
                   ? 'bg-raised text-ink-primary btn-highlight'
                   : 'text-ink-muted hover:text-ink-primary'
               }`}
             >
-              <Film size={15} strokeWidth={1.5} className={viewMode === 'all' ? 'text-accent' : 'text-ink-muted'} />
+              <Film size={14} strokeWidth={1.5} className={`hidden min-[400px]:inline ${viewMode === 'all' ? 'text-accent' : 'text-ink-muted'}`} />
               <span>全部影片</span>
             </button>
           </nav>
         </div>
 
-        {/* Center: Search */}
-        <div className="flex-1 max-w-sm min-w-[140px]">
+        {/* Center: Search (wraps cleanly onto full-width second row on mobile & tablet < lg) */}
+        <div className="order-last w-full lg:order-none lg:w-auto lg:flex-1 lg:max-w-sm min-w-0">
           <div className="relative flex items-center">
             <Search
               size={15}
@@ -98,14 +98,14 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         {/* Right: Actions & Account */}
-        <div className="flex items-center gap-2 flex-none">
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-none min-w-0">
           {user.is_admin && (
             <button
               type="button"
               onClick={onScan}
               disabled={scanning}
               title="掃描媒體目錄"
-              className="h-9 px-3 rounded-lg bg-surface hover:bg-raised disabled:opacity-50 border border-border text-xs font-medium text-ink-secondary hover:text-ink-primary flex items-center gap-2 cinema-focus transition-colors duration-150 ease-cinema"
+              className="h-9 px-2.5 sm:px-3 rounded-lg bg-surface hover:bg-raised disabled:opacity-50 border border-border text-xs font-medium text-ink-secondary hover:text-ink-primary flex items-center gap-2 cinema-focus transition-colors duration-150 ease-cinema"
             >
               <RefreshCw
                 size={15}
@@ -120,12 +120,12 @@ export const Navbar: React.FC<NavbarProps> = ({
             type="button"
             onClick={onOpenUserModal}
             title="帳號設定"
-            className="h-9 px-3 rounded-lg bg-surface hover:bg-raised border border-border text-xs font-medium text-ink-primary flex items-center gap-2 cinema-focus transition-colors duration-150 ease-cinema"
+            className="h-9 px-2 sm:px-3 rounded-lg bg-surface hover:bg-raised border border-border text-xs font-medium text-ink-primary flex items-center gap-1.5 sm:gap-2 min-w-0 cinema-focus transition-colors duration-150 ease-cinema"
           >
-            <UserIcon size={15} strokeWidth={1.5} className="text-ink-muted" />
-            <span>{user.username}</span>
+            <UserIcon size={15} strokeWidth={1.5} className="text-ink-muted flex-none" />
+            <span className="truncate max-w-[64px] sm:max-w-[120px]">{user.username}</span>
             {user.is_admin && (
-              <span className="px-1.5 py-0.5 rounded bg-raised border border-border text-xs text-ink-secondary leading-none hidden sm:inline">
+              <span className="px-1.5 py-0.5 rounded bg-raised border border-border text-xs text-ink-secondary leading-none hidden sm:inline flex-none">
                 管理員
               </span>
             )}
