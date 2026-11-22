@@ -1,6 +1,6 @@
 ---
 name: "PiStream"
-version: "1.0.3"
+version: "1.0.4"
 slug: "pistream"
 description: "Lightweight Raspberry Pi 5 media server with Direct Play, zero-copy Remux, and sliding-window HLS transcoding."
 url: "https://github.com/s90061/ha-apps/tree/main/pistream"
@@ -33,6 +33,7 @@ options:
   media_dir: "/media"
   admin_user: "admin"
   segment_duration: 4
+  buffer_seconds: 45
   max_keep_segments: 10
   transcode_storage: "auto"
   hw_hevc_decode: true
@@ -42,6 +43,7 @@ schema:
   admin_user: "str"
   admin_password: "password?"
   segment_duration: "int(2,10)"
+  buffer_seconds: "int(16,120)"
   max_keep_segments: "int(4,60)"
   transcode_storage: "list(auto|shm|tmp)"
   hw_hevc_decode: "bool"

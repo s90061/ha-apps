@@ -503,3 +503,41 @@ func TestHLSManagerAdjacentSeekReuse(t *testing.T) {
 		t.Fatalf("距離 StartSeg 超過 2 片 (823-820=3) 時應允許重新定位 FFmpeg")
 	}
 }
+
+func TestHLSManagerBufferWatermarks(t *testing.T) {
+	cases := []struct {
+		name      string
+		bufferSec int
+		segDur    int
+		wantLow   int
+		wantHigh  int
+	}{
+		{"default_45s_4s", 45, 4, 6, 12},
+		{"zero_fallback_to_default", 0, 4, 6, 12},
+		{"min_16s_4s", 16, 4, 3, 6},
+		{"below_min_clamped", 8, 4, 3, 6},
+		{"medium_60s_4s", 60, 4, 7, 15},
+		{"max_120s_4s_capped", 120, 4, 10, 16},
+		{"above_max_clamped", 300, 4, 10, 16},
+		{"default_45s_6s_seg", 45, 6, 4, 8},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			low, high := bufferWatermarks(tc.bufferSec, tc.segDur)
+			if low != tc.wantLow || high != tc.wantHigh {
+				t.Fatalf("bufferWatermarks(%d, %d) = (%d, %d)，預期 (%d, %d)",
+					tc.bufferSec, tc.segDur, low, high, tc.wantLow, tc.wantHigh)
+			}
+		})
+	}
+
+	mgr := NewHLSManager(&config.Config{
+		TranscodeTempDir: t.TempDir(),
+		SegmentDuration:  4,
+		MaxKeepSegments:  10,
+	})
+	if low, high := mgr.watermarks(); low != 6 || high != 12 {
+		t.Fatalf("未顯式設定 BufferSeconds 時應套用預設 45s 水位 (6, 12)，實際 (%d, %d)", low, high)
+	}
+}

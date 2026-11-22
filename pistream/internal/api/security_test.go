@@ -312,4 +312,20 @@ func TestSecurityCSRFHeadersTraversalAndInfoLeak(t *testing.T) {
 	if subRec.Header().Get("Access-Control-Allow-Origin") == "*" {
 		t.Fatalf("字幕端點不應設定 Access-Control-Allow-Origin: *")
 	}
+
+	// 8. /api/stream/{id}/info 應回傳有效前瞻緩衝秒數 (預設 45s)
+	infoReq := httptest.NewRequest(http.MethodGet, "http://pistream.local:8080/api/stream/1/info?session=sess_buf_check", nil)
+	infoReq.AddCookie(adminCookie)
+	infoRec := httptest.NewRecorder()
+	handler.ServeHTTP(infoRec, infoReq)
+	if infoRec.Code != http.StatusOK {
+		t.Fatalf("讀取串流資訊失敗: %d %s", infoRec.Code, infoRec.Body.String())
+	}
+	var infoResp map[string]any
+	if err := json.Unmarshal(infoRec.Body.Bytes(), &infoResp); err != nil {
+		t.Fatalf("解析串流資訊 JSON 失敗: %v", err)
+	}
+	if bufSec, ok := infoResp["buffer_seconds"].(float64); !ok || int(bufSec) != config.DefaultBufferSeconds {
+		t.Fatalf("預期 buffer_seconds=%d，實際: %v", config.DefaultBufferSeconds, infoResp["buffer_seconds"])
+	}
 }

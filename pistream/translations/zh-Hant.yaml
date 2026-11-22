@@ -15,6 +15,9 @@ configuration:
   segment_duration:
     name: HLS 切片秒數
     description: 每個 HLS 串流切片的秒數（預設 4 秒，範圍 2 至 10 秒）。
+  buffer_seconds:
+    name: 前瞻緩衝秒數
+    description: HLS 播放前瞻緩衝目標秒數（預設 45 秒，範圍 16 至 120 秒），同步控制瀏覽器端預載緩衝與後端 FFmpeg 提前切片水位，可大幅減少網路或磁碟抖動造成的卡頓與重新載入。
   max_keep_segments:
     name: 滑動視窗保留切片數
     description: 播放頭後方保留的舊切片數量，超過即自動回收（預設 10 個，範圍 4 至 60 個）。

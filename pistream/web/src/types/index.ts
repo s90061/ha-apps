@@ -80,4 +80,5 @@ export interface StreamInfo {
   media: MediaFile;
   decision: StreamDecision;
   progress: PlaybackProgress | null;
+  buffer_seconds?: number;
 }

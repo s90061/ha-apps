@@ -93,6 +93,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
   const subBlobUrlRef = useRef<string | null>(null);
   const subFetchAbortRef = useRef<AbortController | null>(null);
   const seekSeqRef = useRef<number>(0);
+  const explicitSeekRef = useRef<{ target: number; at: number } | null>(null);
   const cueOriginalLayoutRef = useRef<WeakMap<TextTrackCue, OriginalCueLayout>>(new WeakMap());
   const bottomBarVisibleRef = useRef<boolean>(true);
   const [cueLiftPx, setCueLiftPx] = useState<number>(96);
@@ -349,20 +350,27 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
       // 重要：初始化時固定由 startPosition: 0 先載入 seg_00000.ts，確保 hls.js MP4Remuxer 的 _initPTS 鎖定為 0.000s；
       // 待首個切片載入完成後，再於 FRAG_BUFFERED 立即跳轉至 targetStartSec，徹底消除續播時因關鍵幀時間差造成的 initPTS 偏移。
       let pendingInitialSeek: number | null = targetStartSec > 0 ? targetStartSec : null;
+      const configuredBufferSec =
+        typeof streamInfo.buffer_seconds === 'number' &&
+        Number.isFinite(streamInfo.buffer_seconds) &&
+        streamInfo.buffer_seconds >= 16 &&
+        streamInfo.buffer_seconds <= 120
+          ? Math.round(streamInfo.buffer_seconds)
+          : 45;
 
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: false,
         startPosition: 0,
-        backBufferLength: 60,
-        maxBufferLength: 16,
-        maxMaxBufferLength: 32,
+        backBufferLength: 30,
+        maxBufferLength: configuredBufferSec,
+        maxMaxBufferLength: Math.max(60, configuredBufferSec * 2),
         maxBufferHole: 2.5,
         nudgeOffset: 0.25,
         nudgeMaxRetry: 10,
         startFragPrefetch: true,
         fragLoadingTimeOut: 20000,
-        fragLoadingMaxRetry: 1,
+        fragLoadingMaxRetry: 2,
         manifestLoadingTimeOut: 10000,
       });
 
@@ -373,6 +381,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
       let lastHlsNudgeAt = 0;
       let lastOutBufferSeekTarget: number | null = null;
       let lastOutBufferSeekAt = 0;
+      let lastObservedTime = 0;
+      let recoveringUntil = 0;
+      let pendingResumeAfterRecovery = false;
 
       // 當使用者拖拉時間軸至未緩衝區間時，重設所有切片的預期時間為標準切片網格 (sn * segDur)，
       // 消除 remux (-c:v copy) 模式下因關鍵幀長度 > segDur 所造成的 alignSliding 累積切片編號偏移，
@@ -419,16 +430,33 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
         }
       };
 
+      const onVideoTimeTrack = () => {
+        if (!video.seeking && Number.isFinite(video.currentTime)) {
+          lastObservedTime = video.currentTime;
+        }
+      };
+
       const onVideoSeeking = () => {
         const cur = video.currentTime;
+        const now = Date.now();
         if (ignoreNextSeeking) {
           ignoreNextSeeking = false;
+          lastObservedTime = cur;
           if (needRestartLoadOnSeek && hlsRef.current) {
             needRestartLoadOnSeek = false;
             hlsRef.current.startLoad(cur);
           }
           return;
         }
+
+        // 僅將來自 PiStream 介面（時間軸、±10s、方向鍵、續播定位）的跳轉標記為主動跳轉
+        let isExplicitUserSeek = false;
+        const pendingExplicit = explicitSeekRef.current;
+        if (pendingExplicit && now - pendingExplicit.at < 2000 && Math.abs(cur - pendingExplicit.target) <= 1.5) {
+          isExplicitUserSeek = true;
+          explicitSeekRef.current = null;
+        }
+
         if (pendingInitialSeek !== null && Math.abs(cur - pendingInitialSeek) > 1.5) {
           pendingInitialSeek = null;
         }
@@ -441,19 +469,34 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
           }
         }
         if (!inBuffer) {
-          const now = Date.now();
-          const isRecentHlsNudge = now - lastHlsNudgeAt < 400;
           const isNearActiveSeek =
             lastOutBufferSeekTarget !== null &&
             now - lastOutBufferSeekAt < 3500 &&
             cur >= lastOutBufferSeekTarget - 0.5 &&
             cur <= lastOutBufferSeekTarget + 2.0;
-          if (!isRecentHlsNudge && !isNearActiveSeek) {
-            lastOutBufferSeekTarget = cur;
-            lastOutBufferSeekAt = now;
-            resetFragmentsForOutBufferSeek();
+
+          if (isExplicitUserSeek) {
+            if (!isNearActiveSeek) {
+              lastOutBufferSeekTarget = cur;
+              lastOutBufferSeekAt = now;
+              resetFragmentsForOutBufferSeek();
+            }
+          } else {
+            // 非主動跳轉：阻擋 recoverMediaError() 重載定位，以及 hls.js GapController 緩衝卡頓微調
+            // （_tryNudgeBuffer / _trySkipBufferHole 會先同步寫入 media.currentTime 才發出 ERROR 事件），
+            // 避免緩衝不足時誤觸發 seekSeq 遞增並強制重啟健康運作中的 FFmpeg，造成畫面閃跳與影音字幕不同步。
+            const isRecovering = now < recoveringUntil;
+            const isRecentHlsNudge = now - lastHlsNudgeAt < 2500;
+            const isSmallForwardNudge = cur >= lastObservedTime - 0.5 && cur <= lastObservedTime + 6.0;
+            if (!isRecovering && !isRecentHlsNudge && !isSmallForwardNudge && !isNearActiveSeek) {
+              // 保留畫中畫 (PiP) 或作業系統媒體列遠距拖拉的跨緩衝跳轉支援
+              lastOutBufferSeekTarget = cur;
+              lastOutBufferSeekAt = now;
+              resetFragmentsForOutBufferSeek();
+            }
           }
         }
+        lastObservedTime = cur;
         if (needRestartLoadOnSeek && hlsRef.current) {
           needRestartLoadOnSeek = false;
           hlsRef.current.startLoad(video.currentTime);
@@ -461,8 +504,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
       };
       // 使用 capture: true 確保在 hls.js 內部的 onMediaSeeking 選取切片前先完成網格校正與 Transmuxer 重設
       video.addEventListener('seeking', onVideoSeeking, { capture: true });
+      video.addEventListener('timeupdate', onVideoTimeTrack);
+      video.addEventListener('seeked', onVideoTimeTrack);
+      video.addEventListener('loadedmetadata', onVideoTimeTrack);
       cleanupSeekingListener = () => {
         video.removeEventListener('seeking', onVideoSeeking, { capture: true });
+        video.removeEventListener('timeupdate', onVideoTimeTrack);
+        video.removeEventListener('seeked', onVideoTimeTrack);
+        video.removeEventListener('loadedmetadata', onVideoTimeTrack);
       };
 
       hls.loadSource(streamUrl);
@@ -483,9 +532,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
         if (pendingInitialSeek !== null) {
           const seekTarget = pendingInitialSeek;
           pendingInitialSeek = null;
+          explicitSeekRef.current = { target: seekTarget, at: Date.now() };
           video.currentTime = seekTarget;
           video.play().catch(() => {});
           return;
+        }
+        if (pendingResumeAfterRecovery) {
+          pendingResumeAfterRecovery = false;
+          video.play().catch(() => {});
         }
         if (video.paused && !video.seeking) return;
         const buffered = video.buffered;
@@ -555,6 +609,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
           case Hls.ErrorTypes.MEDIA_ERROR:
             if (fatalMediaRetries < 2) {
               fatalMediaRetries += 1;
+              pendingResumeAfterRecovery = !video.paused;
+              recoveringUntil = Date.now() + 3000;
+              // 觸發 recoverMediaError() 重新掛載 MediaSource 前先還原切片標準時間網格、遞增 seekSeq、
+              // 預鎖 initPTS=0 並重設 Transmuxer，確保重載後畫面、聲音與字幕精準同步。
+              resetFragmentsForOutBufferSeek();
               hls.recoverMediaError();
             } else if (
               !forceH264 &&
@@ -722,6 +781,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     if (!video) return;
     const maxDur = getEffectiveDuration();
     const clamped = maxDur > 0 ? Math.max(0, Math.min(maxDur, targetSec)) : Math.max(0, targetSec);
+    if (Math.abs(video.currentTime - clamped) > 0.05) {
+      explicitSeekRef.current = { target: clamped, at: Date.now() };
+    }
     video.currentTime = clamped;
     setCurrentTime(clamped);
   };

@@ -52,6 +52,7 @@ media_dir_opt="$(sanitize_media_path "$(json_opt media_dir "/media")" "/media")"
 admin_user_opt="$(json_opt admin_user "admin")"
 admin_pass_opt="$(json_opt admin_password "")"
 seg_dur_opt="$(json_opt segment_duration "4")"
+buffer_sec_opt="$(json_opt buffer_seconds "45")"
 max_keep_opt="$(json_opt max_keep_segments "10")"
 storage_opt="$(json_opt transcode_storage "auto")"
 hw_hevc_opt="$(json_opt hw_hevc_decode "true")"
@@ -62,6 +63,10 @@ fi
 
 if ! [[ "${seg_dur_opt}" =~ ^[0-9]+$ ]] || [[ "${seg_dur_opt}" -lt 2 ]] || [[ "${seg_dur_opt}" -gt 10 ]]; then
   seg_dur_opt="4"
+fi
+
+if ! [[ "${buffer_sec_opt}" =~ ^[0-9]+$ ]] || [[ "${buffer_sec_opt}" -lt 16 ]] || [[ "${buffer_sec_opt}" -gt 120 ]]; then
+  buffer_sec_opt="45"
 fi
 
 if ! [[ "${max_keep_opt}" =~ ^[0-9]+$ ]] || [[ "${max_keep_opt}" -lt 4 ]] || [[ "${max_keep_opt}" -gt 60 ]]; then
@@ -113,7 +118,7 @@ else
   fi
 fi
 
-# Choose HLS transcode buffer location (auto detects if /dev/shm >= 256MB)
+# Choose HLS transcode buffer location (auto detects if /dev/shm has enough headroom for configured buffer)
 transcode_dir="/tmp/pistream_hls"
 case "${storage_opt}" in
   shm)
@@ -123,12 +128,17 @@ case "${storage_opt}" in
     transcode_dir="/tmp/pistream_hls"
     ;;
   *)
+    min_shm_mb=$(( buffer_sec_opt * 6 ))
+    if [[ "${min_shm_mb}" -lt 256 ]]; then
+      min_shm_mb=256
+    fi
+    min_shm_kb=$(( min_shm_mb * 1024 ))
     shm_kb="$(df -Pk /dev/shm 2>/dev/null | awk 'NR==2 {print $2}' || true)"
-    if [[ "${shm_kb:-0}" =~ ^[0-9]+$ ]] && [[ "${shm_kb}" -ge 262144 ]]; then
+    if [[ "${shm_kb:-0}" =~ ^[0-9]+$ ]] && [[ "${shm_kb}" -ge "${min_shm_kb}" ]]; then
       transcode_dir="/dev/shm/pistream_hls"
     else
       shm_mb=$(( ${shm_kb:-0} / 1024 ))
-      printf '[ha-init] /dev/shm size is %sMB (<256MB); using /tmp/pistream_hls to avoid 4K Remux OOM\n' "${shm_mb}"
+      printf '[ha-init] /dev/shm size is %sMB (<%sMB for %ss buffer); using /tmp/pistream_hls to avoid 4K Remux OOM\n' "${shm_mb}" "${min_shm_mb}" "${buffer_sec_opt}"
       transcode_dir="/tmp/pistream_hls"
     fi
     ;;
@@ -145,6 +155,7 @@ export CACHE_DIR="${CONFIG_DIR}/cache"
 export TRANSCODE_TEMP_DIR="${transcode_dir}"
 export WEB_DIR="/app/web/dist"
 export SEGMENT_DURATION="${seg_dur_opt}"
+export BUFFER_SECONDS="${buffer_sec_opt}"
 export MAX_KEEP_SEGMENTS="${max_keep_opt}"
 
 probe_dev_access() {
@@ -192,7 +203,7 @@ else
   unset HW_ACCEL
 fi
 
-printf '[ha-init] Starting PiStream v%s (MEDIA_DIR=%s, TRANSCODE_TEMP_DIR=%s, SEGMENT_DURATION=%ss, MAX_KEEP_SEGMENTS=%s, HW_ACCEL=%s)\n' \
-  "${APP_VERSION:-dev}" "${MEDIA_DIR}" "${TRANSCODE_TEMP_DIR}" "${SEGMENT_DURATION}" "${MAX_KEEP_SEGMENTS}" "${HW_ACCEL:-none}"
+printf '[ha-init] Starting PiStream v%s (MEDIA_DIR=%s, TRANSCODE_TEMP_DIR=%s, SEGMENT_DURATION=%ss, BUFFER_SECONDS=%ss, MAX_KEEP_SEGMENTS=%s, HW_ACCEL=%s)\n' \
+  "${APP_VERSION:-dev}" "${MEDIA_DIR}" "${TRANSCODE_TEMP_DIR}" "${SEGMENT_DURATION}" "${BUFFER_SECONDS}" "${MAX_KEEP_SEGMENTS}" "${HW_ACCEL:-none}"
 
 exec /app/pistream
