@@ -51,7 +51,6 @@ tz_opt="$(json_opt tz "Asia/Taipei")"
 media_dir_opt="$(sanitize_media_path "$(json_opt media_dir "/media")" "/media")"
 admin_user_opt="$(json_opt admin_user "admin")"
 admin_pass_opt="$(json_opt admin_password "")"
-jwt_secret_opt="$(json_opt jwt_secret "")"
 seg_dur_opt="$(json_opt segment_duration "4")"
 max_keep_opt="$(json_opt max_keep_segments "10")"
 storage_opt="$(json_opt transcode_storage "auto")"
@@ -71,11 +70,10 @@ fi
 
 mkdir -p "${CONFIG_DIR}/cache/thumbs" "${CONFIG_DIR}/cache/subs"
 
-# Persist JWT secret across container restarts unless overridden in options
-if [[ -n "${jwt_secret_opt}" ]]; then
-  export JWT_SECRET="${jwt_secret_opt}"
-elif [[ -s "${JWT_SECRET_FILE}" ]]; then
+# Always auto-manage the internal HttpOnly cookie signing key in /config/.jwt_secret
+if [[ -s "${JWT_SECRET_FILE}" ]]; then
   JWT_SECRET="$(tr -d '\r\n' < "${JWT_SECRET_FILE}")"
+  chmod 600 "${JWT_SECRET_FILE}" 2>/dev/null || true
   export JWT_SECRET
 else
   JWT_SECRET="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"

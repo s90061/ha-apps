@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.14
+
+- Removed the `jwt_secret` option from the Home Assistant Configuration UI (`config.yaml`, translations, and `DOCS.md`); the internal `HttpOnly` cookie signing key is now always automatically generated and persisted in `/config/.jwt_secret` (`chmod 600`).
+
 ## 0.1.13
 
 - **Security Hardening**:
