@@ -331,8 +331,8 @@ func resolveSortOrderClause(sortBy string) string {
 	case "size_desc":
 		return ` ORDER BY f.file_size DESC, f.title COLLATE NOCASE ASC`
 	default:
-		// 預設 name_asc
-		return ` ORDER BY f.rel_dir ASC, f.title COLLATE NOCASE ASC`
+		// 預設 name_asc（與 name_desc 一致，純粹依檔名字母排序，不先依資料夾分組）
+		return ` ORDER BY f.title COLLATE NOCASE ASC, f.id ASC`
 	}
 }
 
