@@ -74,15 +74,25 @@
   transform: scale(1.15);
 }
 
-video::-webkit-media-text-track-container {
-  transform: translateY(0);
-  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+/* Jellyfin 式自訂 HTML 字幕疊層樣式（桌面瀏覽器預設使用，跨瀏覽器統一樣式與平滑避讓時間軸） */
+.pistream-subtitle-cue {
+  display: inline;
+  background-color: rgba(15, 15, 16, 0.82);
+  color: #ededed;
+  font-family: "Microsoft JhengHei", "PingFang TC", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK TC", system-ui, sans-serif;
+  font-weight: 400;
+  font-feature-settings: normal;
+  line-height: 1.45;
+  padding: 0.1em 0.36em;
+  border-radius: 0.18em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
-video.pistream-controls-visible::-webkit-media-text-track-container {
-  transform: translateY(var(--pistream-cue-lift, -96px));
-}
-
+/* 原生 WebVTT 回退樣式（僅供 iOS 原生全螢幕與子母畫面 PiP 使用） */
 video::cue {
   background-color: rgba(15, 15, 16, 0.82);
   color: #ededed;
