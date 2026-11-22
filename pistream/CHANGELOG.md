@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0
+
+First stable production release of PiStream for Raspberry Pi 5 / Home Assistant OS (`aarch64`), following complete end-to-end functional, streaming, subtitle, security, and responsive layout verification:
+
+- **Three-Tier Media Streaming & Raspberry Pi 5 Hardware Decoding**: HTTP 206 zero-CPU `Direct Play` (including HEVC & native `EAC3` detection), zero-reencode `Remux` (`-c:v copy` with accurate keyframe PTS alignment and Smart 1080p Bypass), and hardware-decoded `HLS Transcode` powered by Debian Trixie + Raspberry Pi patched `ffmpeg` (`rpi-hevc-dec` V4L2-request DRM via BCM2712 IOMMU MMap without disabling Protection Mode), with paced `1.2x` readrate, `SIGSTOP`/`SIGCONT` ahead-buffer throttling, and instant player-close termination.
+- **Zero-Ghosting Subtitles & Cinema UI**: External (`.srt`/`.vtt`/`.ass`) and cached embedded WebVTT subtitles with in-memory timestamp offset shifting (`-0.5s`/`+0.5s`/reset) via Blob `<track>` rebuild, persistent font scaling (75%–220%), multi-user accounts and independent Continue Watching (max 4), folder browser, 5 symmetric sort options, customizable file-size filter, and responsive desktop/tablet/mobile layout.
+- **Production Security Hardening**: Pure `HttpOnly` Cookie authentication with auto-managed `/config/.jwt_secret`, immediate server-side `token_version` session revocation, login brute-force rate limiting (`429`), strict `sessionID` validation and per-user session isolation, HLS concurrency caps, HA Ingress-compatible CSP & same-origin CSRF protection, and SHA256-pinned APT keyring verification.
+- Updated `DOCS.md` to document `hw_hevc_decode`, Raspberry Pi 5 hardware decoding, and the 1.0.0 security architecture.
+
 ## 0.1.15
 
 - Fixed `name_asc` (`檔名：A–Z`) sorting in `internal/db/sqlite.go` to sort purely by filename (`f.title COLLATE NOCASE ASC, f.id ASC`) instead of grouping by folder first, matching `name_desc` (`檔名：Z–A`) in the "All Videos" view.
