@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.9
+
+- **Auto-Reset Watch History & Media Index When `media_dir` Changes**:
+  - Added an `app_meta` table and `Store.SyncMediaDir()` (`internal/db/sqlite.go`) to track the normalized active `media_dir` path across restarts. On first upgrade from `1.0.8` or earlier, the current path is recorded without touching existing data; whenever `media_dir` is subsequently changed (including parent/subfolder switches such as `/media` ↔ `/media/movies`), PiStream synchronously clears `playback_progress`, clears old `media_files` entries, and wipes stale `cache/thumbs` and `cache/subs` before starting the background library scan (preserving all user accounts).
+  - Registered a `modernc.org/sqlite` connection hook (`PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;`) so every pooled SQLite connection enforces foreign-key `ON DELETE CASCADE` reliably.
+
 ## 1.0.8
 
 - **Fixed Orphaned 100%-CPU Zombie FFmpeg Process on Quality Switch or Player Exit**:

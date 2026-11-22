@@ -36,7 +36,7 @@ This app packages [`s90061/pistream`](https://github.com/s90061/pistream) (`aarc
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `tz` | `str` | `Asia/Taipei` | Container timezone (`TZ`). |
-| `media_dir` | `match(^/(media\|share\|config)(/.*)?$)` | `/media` | Media library root folder (`MEDIA_DIR`). |
+| `media_dir` | `match(^/(media\|share\|config)(/.*)?$)` | `/media` | Media library root folder (`MEDIA_DIR`). Changing this path automatically clears all playback progress, resets the media index, and wipes thumbnail/subtitle caches before rescanning. |
 | `admin_user` | `str` | `admin` | Default administrator username (`ADMIN_USER`). |
 | `admin_password` | `password?` | _(unset)_ | Optional admin password override (`ADMIN_PASSWORD`). |
 | `segment_duration` | `int(2,10)` | `4` | HLS segment duration in seconds (`SEGMENT_DURATION`). |

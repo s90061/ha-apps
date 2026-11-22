@@ -36,6 +36,17 @@ func main() {
 		log.Fatalf("初始化預設管理員帳號失敗: %v", err)
 	}
 
+	if changed, prevDir, clearedProg, clearedMedia, err := store.SyncMediaDir(cfg.MediaDir); err != nil {
+		log.Fatalf("同步媒體庫路徑設定失敗: %v", err)
+	} else if changed {
+		fmt.Printf("🔄 偵測到媒體庫路徑變更 (%s -> %s)，已立刻清空 %d 筆觀看紀錄與 %d 筆舊影片索引，並清除縮圖與字幕快取\n",
+			prevDir, cfg.MediaDir, clearedProg, clearedMedia)
+		_ = os.RemoveAll(filepath.Join(cfg.CacheDir, "thumbs"))
+		_ = os.RemoveAll(filepath.Join(cfg.CacheDir, "subs"))
+		_ = os.MkdirAll(filepath.Join(cfg.CacheDir, "thumbs"), 0755)
+		_ = os.MkdirAll(filepath.Join(cfg.CacheDir, "subs"), 0755)
+	}
+
 	fmt.Printf("==================================================\n")
 	fmt.Printf("🍓 PiStream — 樹莓派 5 極速遠端媒體伺服器啟動中...\n")
 	fmt.Printf("📂 媒體庫路徑: %s\n", cfg.MediaDir)
