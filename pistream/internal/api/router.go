@@ -397,9 +397,10 @@ func NewRouter(cfg *config.Config, store *db.Store, hlsMgr *stream.HLSManager) h
 		prog, _ := store.GetProgress(u.UserID, fileID)
 
 		writeJSON(w, http.StatusOK, map[string]any{
-			"media":    media,
-			"decision": decision,
-			"progress": prog,
+			"media":          media,
+			"decision":       decision,
+			"progress":       prog,
+			"buffer_seconds": cfg.EffectiveBufferSeconds(),
 		})
 	}))
 

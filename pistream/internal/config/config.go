@@ -17,6 +17,7 @@ type Config struct {
 	TranscodeTempDir string
 	WebDir           string
 	SegmentDuration  int
+	BufferSeconds    int
 	MaxKeepSegments  int
 	AdminUser        string
 	AdminPassword    string
@@ -37,6 +38,13 @@ func Load() *Config {
 	if v := os.Getenv("SEGMENT_DURATION"); v != "" {
 		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 2 && parsed <= 10 {
 			segDur = parsed
+		}
+	}
+
+	bufferSec := DefaultBufferSeconds
+	if v := os.Getenv("BUFFER_SECONDS"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed >= MinBufferSeconds && parsed <= MaxBufferSeconds {
+			bufferSec = parsed
 		}
 	}
 
@@ -62,6 +70,7 @@ func Load() *Config {
 		TranscodeTempDir: getEnv("TRANSCODE_TEMP_DIR", defaultTemp),
 		WebDir:           getEnv("WEB_DIR", "./web/dist"),
 		SegmentDuration:  segDur,
+		BufferSeconds:    bufferSec,
 		MaxKeepSegments:  maxKeep,
 		AdminUser:        getEnv("ADMIN_USER", "admin"),
 		AdminPassword:    getEnv("ADMIN_PASSWORD", "admin123"),
@@ -69,6 +78,32 @@ func Load() *Config {
 		HwAccel:          getEnv("HW_ACCEL", ""),
 		VaapiDevice:      getEnv("VAAPI_DEVICE", "/dev/dri/renderD128"),
 	}
+}
+
+const (
+	DefaultBufferSeconds = 45
+	MinBufferSeconds     = 16
+	MaxBufferSeconds     = 120
+)
+
+func (c *Config) EffectiveBufferSeconds() int {
+	if c == nil || c.BufferSeconds <= 0 {
+		return DefaultBufferSeconds
+	}
+	if c.BufferSeconds < MinBufferSeconds {
+		return MinBufferSeconds
+	}
+	if c.BufferSeconds > MaxBufferSeconds {
+		return MaxBufferSeconds
+	}
+	return c.BufferSeconds
+}
+
+func (c *Config) EffectiveSegmentDuration() int {
+	if c == nil || c.SegmentDuration <= 0 {
+		return 4
+	}
+	return c.SegmentDuration
 }
 
 func getEnv(key, fallback string) string {

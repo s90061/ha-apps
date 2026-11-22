@@ -81,6 +81,45 @@ func maxSegmentIndex(durationSec float64, segDur int) int {
 	return int(math.Ceil(durationSec/float64(segDur))) + 2
 }
 
+// bufferWatermarks 依設定的前瞻緩衝秒數與切片長度動態計算 FFmpeg 暫停 (highWater) 與喚醒 (lowWater) 的超前切片數。
+// 預設 45s / 4s -> lowWater=6 (24s)、highWater=12 (48s)，並將伺服器端單次超前切片上限鎖定在 16 片內以兼顧磁碟與 /dev/shm 容量。
+func bufferWatermarks(bufferSec, segDur int) (lowWater, highWater int) {
+	if segDur <= 0 {
+		segDur = 4
+	}
+	if bufferSec <= 0 {
+		bufferSec = config.DefaultBufferSeconds
+	}
+	if bufferSec < config.MinBufferSeconds {
+		bufferSec = config.MinBufferSeconds
+	}
+	if bufferSec > config.MaxBufferSeconds {
+		bufferSec = config.MaxBufferSeconds
+	}
+
+	bufferSegs := int(math.Ceil(float64(bufferSec) / float64(segDur)))
+	lowWater = bufferSegs / 2
+	if lowWater < 3 {
+		lowWater = 3
+	}
+	if lowWater > 10 {
+		lowWater = 10
+	}
+
+	highWater = bufferSegs
+	if highWater < lowWater+3 {
+		highWater = lowWater + 3
+	}
+	if highWater > 16 {
+		highWater = 16
+	}
+	return lowWater, highWater
+}
+
+func (m *HLSManager) watermarks() (lowWater, highWater int) {
+	return bufferWatermarks(m.cfg.EffectiveBufferSeconds(), m.cfg.EffectiveSegmentDuration())
+}
+
 type HLSSession struct {
 	Key            string
 	OwnerUserID    int64
@@ -336,7 +375,11 @@ func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, ownerUserID int6
 		m.clearAllSegmentsLocked(sess)
 		m.restartFFmpegLocked(sess, segIndex)
 	} else {
-		maxForwardJump := 6
+		lowWater, highWater := m.watermarks()
+		maxForwardJump := highWater
+		if maxForwardJump < 6 {
+			maxForwardJump = 6
+		}
 		if mode == "remux" {
 			maxForwardJump = 1
 		}
@@ -347,10 +390,10 @@ func (m *HLSManager) EnsureSegmentReady(reqCtx context.Context, ownerUserID int6
 				sess.CurrentHeadSeg = segIndex
 				m.pruneOldSegmentsLocked(sess, segIndex)
 			}
-			// 若前瞻緩衝低於 3 個切片 (12秒)，提前喚醒已暫停的 FFmpeg 繼續補充切片
+			// 若前瞻緩衝低於低水位，提前喚醒已暫停的 FFmpeg 繼續補充切片
 			if sess.IsPaused {
-				lowWaterSeg := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+3))
-				lowWaterNext := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+4))
+				lowWaterSeg := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+lowWater))
+				lowWaterNext := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+lowWater+1))
 				if !isSegmentComplete(lowWaterSeg, lowWaterNext, sess.ProcessDone) {
 					m.resumeFFmpegLocked(sess)
 				}
@@ -638,11 +681,12 @@ func (m *HLSManager) resumeFFmpegLocked(sess *HLSSession) {
 	sess.IsPaused = false
 }
 
-// throttleLoop 前瞻緩衝節流迴圈：當 FFmpeg 產生的切片超前播放頭達 6 個 (24秒) 時自動發送 SIGSTOP 暫停轉碼，
+// throttleLoop 前瞻緩衝節流迴圈：當 FFmpeg 產生的切片超前播放頭達高水位 (依 buffer_seconds 動態計算) 時自動發送 SIGSTOP 暫停轉碼，
 // 讓樹莓派 CPU 瞬間降至 0% 並防止未播切片塞滿 /dev/shm 或 /tmp
 func (m *HLSManager) throttleLoop() {
 	ticker := time.NewTicker(1 * time.Second)
 	for range ticker.C {
+		_, highWater := m.watermarks()
 		m.mu.RLock()
 		sessions := make([]*HLSSession, 0, len(m.sessions))
 		for _, s := range m.sessions {
@@ -653,8 +697,8 @@ func (m *HLSManager) throttleLoop() {
 		for _, sess := range sessions {
 			sess.mu.Lock()
 			if !sess.IsPaused && sess.Cmd != nil && !isProcessExited(sess.ProcessDone) && sess.CurrentHeadSeg >= 0 {
-				highWaterSeg := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+6))
-				highWaterNext := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+7))
+				highWaterSeg := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+highWater))
+				highWaterNext := filepath.Join(sess.OutputDir, fmt.Sprintf("seg_%05d.ts", sess.CurrentHeadSeg+highWater+1))
 				if isSegmentComplete(highWaterSeg, highWaterNext, sess.ProcessDone) {
 					m.pauseFFmpegLocked(sess)
 				}

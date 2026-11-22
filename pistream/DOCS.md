@@ -40,6 +40,7 @@ This app packages [`s90061/pistream`](https://github.com/s90061/pistream) (`aarc
 | `admin_user` | `str` | `admin` | Default administrator username (`ADMIN_USER`). |
 | `admin_password` | `password?` | _(unset)_ | Optional admin password override (`ADMIN_PASSWORD`). |
 | `segment_duration` | `int(2,10)` | `4` | HLS segment duration in seconds (`SEGMENT_DURATION`). |
+| `buffer_seconds` | `int(16,120)` | `45` | Target forward HLS playback buffer in seconds (`BUFFER_SECONDS`), synchronizing both browser `hls.js` pre-buffering and server FFmpeg ahead-segment watermarks. |
 | `max_keep_segments` | `int(4,60)` | `10` | Sliding-window segments kept behind playhead (`MAX_KEEP_SEGMENTS`). |
 | `transcode_storage` | `list(auto\|shm\|tmp)` | `auto` | HLS buffer location (`auto`, `shm` for `/dev/shm`, or `tmp` for `/tmp`). |
 | `hw_hevc_decode` | `bool` | `true` | Enable Raspberry Pi 5 V4L2-request / DRM hardware HEVC decoding (`rpi-hevc-dec`, auto-falls back to CPU if unavailable). |

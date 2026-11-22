@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.4
+
+- **Larger, Configurable Forward HLS Buffer (`buffer_seconds`, default `45`s, range `16`–`120`s)**:
+  - Added `buffer_seconds` to Home Assistant app configuration (`config.yaml`, `translations/`, `DOCS.md`, `ha-entrypoint.sh`, and `internal/config/config.go`), exposed via `GET /api/stream/{id}/info`.
+  - Synchronized browser `hls.js` buffering (`maxBufferLength: buffer_seconds`, `maxMaxBufferLength: max(60, buffer_seconds * 2)`, tighter `backBufferLength: 30` to preserve MSE quota, `fragLoadingMaxRetry: 2`) with dynamic server-side `HLSManager` ahead-segment `SIGSTOP`/`SIGCONT` watermarks (`45s` / `4s` -> low `6` / high `12` segments, capped at `16` ahead) and scaled `transcode_storage: auto` `/dev/shm` headroom checks.
+- **Prevented Buffer-Underrun / Reload A/V & Subtitle Desync**:
+  - Isolated explicit user seeks (custom timeline bar, `±10s`, keyboard shortcuts, resume seek) from `hls.js` `GapController` stall nudges (`_tryNudgeBuffer` / `_trySkipBufferHole`), which synchronously modify `video.currentTime` before emitting `BUFFER_NUDGE_ON_STALL` — stopping temporary buffer stalls from falsely incrementing `seekSeq` and restarting a healthy FFmpeg process.
+  - Reset fragment timeline grid (`sn * segDur`), incremented `seekSeq`, locked `initPTS=0`, and reset `hls.js` Transmuxer (`resetTransmuxer()` / `fragPrevious = null` / `fragmentTracker`) before calling `hls.recoverMediaError()` on fatal `MEDIA_ERROR`, and resumed playback cleanly afterward so recovery reloads never drift out of sync with audio or subtitles.
+
 ## 1.0.3
 
 - Automatically lift subtitles above the custom bottom timeline/control bar whenever playback controls are visible, and smoothly return them to the bottom edge when controls auto-hide:

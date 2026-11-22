@@ -15,6 +15,9 @@ configuration:
   segment_duration:
     name: HLS Segment Duration (Seconds)
     description: Duration in seconds of each HLS segment (default 4, range 2-10).
+  buffer_seconds:
+    name: Forward Buffer Length (Seconds)
+    description: Target forward HLS playback buffer in seconds (default 45, range 16-120). Controls both the browser player buffer and the server ahead-segment generation watermark.
   max_keep_segments:
     name: Sliding-Window Kept Segments
     description: Number of recent HLS segments retained behind the playhead before automatic cleanup (default 10, range 4-60).
