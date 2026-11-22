@@ -1,6 +1,6 @@
 ---
 name: "PiStream"
-version: "1.0.9"
+version: "1.0.10"
 slug: "pistream"
 description: "Lightweight Raspberry Pi 5 media server with Direct Play, zero-copy Remux, and sliding-window HLS transcoding."
 url: "https://github.com/s90061/ha-apps/tree/main/pistream"

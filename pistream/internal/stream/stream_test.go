@@ -424,7 +424,10 @@ func TestHLSManagerStopSessionAndTombstone(t *testing.T) {
 		t.Fatalf("預期暫存目錄已被刪除，但仍存在: %v", err)
 	}
 
-	// 關閉瞬間遲到的切片請求應立即回傳 context.Canceled，不得重新啟動 FFmpeg
+	// 關閉瞬間遲到的切片請求應立即回傳 context.Canceled，不得重新啟動 FFmpeg（包含直接呼叫 getOrCreateSession 的鎖內二次防呆）
+	if _, err := mgr.getOrCreateSession(1, "sess_close_test", media, "transcode", "1080p", 0); !errors.Is(err, context.Canceled) {
+		t.Fatalf("預期 getOrCreateSession 在鎖內攔截已 tombstone 的 Session 並回傳 context.Canceled，實際: %v", err)
+	}
 	_, err = mgr.EnsureSegmentReady(context.Background(), 1, "sess_close_test", media, "transcode", "1080p", 0, 1, "")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("預期已停止的 Session 拒絕遲到切片請求並回傳 context.Canceled，實際: %v", err)
