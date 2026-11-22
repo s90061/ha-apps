@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.7
+
+- **Fixed `HLSManager` Temp Directory Race Condition (`exit status 254: No such file or directory`)**:
+  - Assigned a unique monotonic sequence suffix (`nextDirID`) to each `HLSSession` output directory in `getOrCreateSession()` so an asynchronous `StopSession(tombstone=false)` cleanup (e.g. switching from `HLS` → `Direct Play` → rapid fallback to `Remux`/`1080p` transcode under the same `sessionID`) can never delete the newly recreated session's output directory.
+  - Ensured `os.MkdirAll(sess.OutputDir, 0755)` is always executed inside `restartFFmpegLocked()` before launching FFmpeg, preventing `ENOENT` failures from falsely disabling Pi 5 `drm` hardware HEVC decode (`DisableHwAccel = true`) and causing CPU-pegging retry loops.
+  - Increased abnormal FFmpeg stderr diagnostic tail retention from `400` to `700` characters so root-cause lines (`Failed to open segment ...`) are preserved in logs.
+
 ## 1.0.6
 
 - **Three-Stage Automatic Playback Fallback (`Direct Play` → `Remux` → `1080p` H.264 Transcode)**:

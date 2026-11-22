@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"pistream/internal/config"
@@ -145,6 +146,7 @@ type HLSManager struct {
 	cfg             *config.Config
 	sessions        map[string]*HLSSession
 	stoppedSessions map[string]time.Time
+	nextDirID       atomic.Uint64
 	mu              sync.RWMutex
 }
 
@@ -299,7 +301,8 @@ func (m *HLSManager) getOrCreateSession(ownerUserID int64, sessionID string, med
 		return nil, ErrTooManySessions
 	}
 
-	outDir := filepath.Join(m.cfg.TranscodeTempDir, fmt.Sprintf("u%d_file_%d_%s", ownerUserID, media.ID, sessionID))
+	dirSeq := m.nextDirID.Add(1)
+	outDir := filepath.Join(m.cfg.TranscodeTempDir, fmt.Sprintf("u%d_file_%d_%s_%d", ownerUserID, media.ID, sessionID, dirSeq))
 	if !isSubpath(m.cfg.TranscodeTempDir, outDir) {
 		m.mu.Unlock()
 		return nil, ErrInvalidSessionID
@@ -467,7 +470,11 @@ func (m *HLSManager) restartFFmpegLocked(sess *HLSSession, startSeg int) {
 		}
 	}
 
-	// 清理先前跳轉產生的舊切片與內部清單，避免讀到 PTS 不連續或未寫完的殘留檔
+	// 確保輸出暫存目錄存在（防止併發回收或外部清理導致 FFmpeg 寫入 seg_00000.ts 報 ENOENT / exit status 254），
+	// 並清理先前跳轉產生的舊切片與內部清單，避免讀到 PTS 不連續或未寫完的殘留檔
+	if sess.OutputDir != "" && isSubpath(m.cfg.TranscodeTempDir, sess.OutputDir) {
+		_ = os.MkdirAll(sess.OutputDir, 0755)
+	}
 	m.clearAllSegmentsLocked(sess)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -552,8 +559,8 @@ func (m *HLSManager) restartFFmpegLocked(sess *HLSSession, startSeg int) {
 			if errMsg == "" {
 				errMsg = strings.TrimSpace(errBuf.String())
 			}
-			if len(errMsg) > 400 {
-				errMsg = errMsg[len(errMsg)-400:]
+			if len(errMsg) > 700 {
+				errMsg = errMsg[len(errMsg)-700:]
 			}
 			fmt.Printf("[HLSManager] FFmpeg 異常結束 (%v): %s\n", waitErr, errMsg)
 		}
