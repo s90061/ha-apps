@@ -58,6 +58,14 @@ function shiftWebVTT(rawVtt: string, offsetSec: number): string {
   });
 }
 
+interface OriginalCueLayout {
+  line: LineAndPositionSetting;
+  snapToLines: boolean;
+  lineAlign: LineAlignSetting;
+}
+
+const supportsVttLineAlign = typeof VTTCue !== 'undefined' && 'lineAlign' in VTTCue.prototype;
+
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -85,6 +93,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
   const subBlobUrlRef = useRef<string | null>(null);
   const subFetchAbortRef = useRef<AbortController | null>(null);
   const seekSeqRef = useRef<number>(0);
+  const cueOriginalLayoutRef = useRef<WeakMap<TextTrackCue, OriginalCueLayout>>(new WeakMap());
+  const bottomBarVisibleRef = useRef<boolean>(true);
+  const [cueLiftPx, setCueLiftPx] = useState<number>(96);
   const [subtitleScale, setSubtitleScale] = useState<number>(() => {
     const saved = Number(localStorage.getItem('pistream_subtitle_scale'));
     return saved >= 75 && saved <= 220 ? saved : 100;
@@ -114,6 +125,76 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
     }
   };
 
+  const syncCuePositionAboveControls = (video: HTMLVideoElement | null, raiseAboveControls: boolean) => {
+    if (!video) return;
+    const vRect = video.getBoundingClientRect();
+    const seekRect = seekBarRef.current?.getBoundingClientRect();
+    const clearancePx =
+      raiseAboveControls && seekRect && vRect.height > 0 && seekRect.top > vRect.top
+        ? Math.max(96, Math.round(vRect.bottom - seekRect.top + 18))
+        : 96;
+
+    if (!supportsVttLineAlign) {
+      if (raiseAboveControls) {
+        setCueLiftPx(clearancePx);
+      }
+      return;
+    }
+
+    if (!video.textTracks || video.textTracks.length === 0) return;
+    const videoHeight = vRect.height || window.innerHeight || 720;
+    const safeLinePct = Math.max(50, Math.min(90, Math.floor(((videoHeight - clearancePx) / videoHeight) * 100)));
+
+    for (let t = 0; t < video.textTracks.length; t++) {
+      const track = video.textTracks[t];
+      if (track.mode !== 'showing' || !track.cues || track.cues.length === 0) continue;
+      let changed = false;
+      for (let i = 0; i < track.cues.length; i++) {
+        const cue = track.cues[i] as VTTCue;
+        if (!('line' in cue) || !('snapToLines' in cue) || !('lineAlign' in cue)) continue;
+        let orig = cueOriginalLayoutRef.current.get(cue);
+        if (!orig) {
+          orig = {
+            line: cue.line,
+            snapToLines: cue.snapToLines,
+            lineAlign: cue.lineAlign,
+          };
+          cueOriginalLayoutRef.current.set(cue, orig);
+        }
+        // 保留明確定位於畫面上半部的字幕（如歌詞／標題註解），只抬升底部對白字幕
+        const isTopPinned =
+          typeof orig.line === 'number' &&
+          ((orig.snapToLines && orig.line >= 0 && orig.line < 5) || (!orig.snapToLines && orig.line < 50));
+        if (isTopPinned) continue;
+
+        try {
+          if (raiseAboveControls) {
+            if (cue.snapToLines !== false || cue.lineAlign !== 'end' || cue.line !== safeLinePct) {
+              cue.snapToLines = false;
+              cue.lineAlign = 'end';
+              cue.line = safeLinePct;
+              changed = true;
+            }
+          } else {
+            if (cue.snapToLines !== orig.snapToLines || cue.lineAlign !== orig.lineAlign || cue.line !== orig.line) {
+              cue.snapToLines = orig.snapToLines;
+              cue.lineAlign = orig.lineAlign;
+              cue.line = orig.line;
+              changed = true;
+            }
+          }
+        } catch {
+          // ignore browser-specific VTTCue layout assignment errors
+        }
+      }
+      // Firefox 變更活躍中 VTTCue.line 後需切換一次 mode 以立即重繪定位
+      if (changed && track.activeCues && track.activeCues.length > 0) {
+        track.mode = 'hidden';
+        track.mode = 'showing';
+      }
+    }
+  };
+
   const mountSubtitleFromRawVtt = (rawVtt: string, offsetSec: number) => {
     const video = videoRef.current;
     if (!video) return;
@@ -136,6 +217,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
       () => {
         if (track.track) {
           track.track.mode = 'showing';
+          syncCuePositionAboveControls(videoRef.current, bottomBarVisibleRef.current);
         }
       },
       { once: true },
@@ -920,6 +1002,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
   const effectiveVolume = isMuted ? 0 : volume;
   const volumePct = Math.round(effectiveVolume * 100);
   const hideControls = isPlaying && !loading && !error && !controlsVisible && scrubTime === null;
+  const bottomBarVisible = !error && !hideControls;
+
+  // 當底部控制列顯示／隱藏、或視窗與全螢幕尺寸改變時，自動將字幕上移至時間軸上方避免遮擋，隱藏時復位回底部
+  useEffect(() => {
+    bottomBarVisibleRef.current = bottomBarVisible;
+    syncCuePositionAboveControls(videoRef.current, bottomBarVisible);
+    if (!bottomBarVisible) return;
+    const handleResize = () => syncCuePositionAboveControls(videoRef.current, true);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [bottomBarVisible, isFullscreen, selectedSub]);
 
   return (
     <div
@@ -933,6 +1026,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
       <div
         ref={topBarRef}
         onMouseEnter={() => {
+          if (Date.now() - lastTouchTimeRef.current < 500) return;
           hoveringTopBarRef.current = true;
           clearHideTimer();
           setControlsVisible(true);
@@ -941,7 +1035,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
           hoveringTopBarRef.current = false;
           scheduleAutoHide();
         }}
-        onTouchStart={revealControls}
+        onTouchStart={() => {
+          lastTouchTimeRef.current = Date.now();
+          hoveringTopBarRef.current = false;
+          revealControls();
+        }}
         className={`absolute top-0 left-0 right-0 z-20 px-4 pt-3 pb-8 sm:px-6 sm:pt-4 sm:pb-10 bg-gradient-to-b from-[#0f0f10]/95 via-[#0f0f10]/75 to-transparent flex flex-wrap items-center justify-between gap-3 transition-[opacity,transform] duration-200 ease-cinema ${
           hideControls ? 'opacity-0 -translate-y-2 pointer-events-none' : 'opacity-100 translate-y-0'
         }`}
@@ -1123,8 +1221,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
         onTouchStart={handleVideoTouchStart}
         onClick={handleVideoClick}
         onDoubleClick={handleVideoDoubleClick}
-        style={{ '--pistream-cue-size': `${((1.05 * subtitleScale) / 100).toFixed(2)}em` } as React.CSSProperties}
-        className="w-full h-full object-contain focus:outline-none"
+        style={
+          {
+            '--pistream-cue-size': `${((1.05 * subtitleScale) / 100).toFixed(2)}em`,
+            '--pistream-cue-lift': `-${cueLiftPx}px`,
+          } as React.CSSProperties
+        }
+        className={`w-full h-full object-contain focus:outline-none ${
+          !supportsVttLineAlign && bottomBarVisible ? 'pistream-controls-visible' : ''
+        }`}
         onLoadedMetadata={() => {
           const v = videoRef.current;
           if (!v) return;
@@ -1167,6 +1272,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
       {!error && (
         <div
           onMouseEnter={() => {
+            if (Date.now() - lastTouchTimeRef.current < 500) return;
             hoveringBottomBarRef.current = true;
             clearHideTimer();
             setControlsVisible(true);
@@ -1176,7 +1282,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ fileId, onClose }) => 
             setHoverTime(null);
             scheduleAutoHide();
           }}
-          onTouchStart={revealControls}
+          onTouchStart={() => {
+            lastTouchTimeRef.current = Date.now();
+            hoveringBottomBarRef.current = false;
+            revealControls();
+          }}
           onClick={(e) => e.stopPropagation()}
           className={`absolute bottom-0 left-0 right-0 z-20 px-4 pt-10 pb-3 sm:px-6 sm:pb-4 bg-gradient-to-t from-[#0f0f10]/95 via-[#0f0f10]/75 to-transparent transition-[opacity,transform] duration-200 ease-cinema ${
             hideControls ? 'opacity-0 translate-y-2 pointer-events-none' : 'opacity-100 translate-y-0'
