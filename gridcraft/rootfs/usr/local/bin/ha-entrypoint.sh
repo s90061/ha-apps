@@ -46,7 +46,7 @@ sanitize_storage_path() {
 
 tz_opt="$(json_opt tz "Asia/Taipei")"
 storage_dir_opt="$(sanitize_storage_path "$(json_opt storage_dir "/share/gridcraft")" "/share/gridcraft")"
-default_lang_opt="$(json_opt default_language "auto")"
+default_lang_opt="$(json_opt default_language "zh-hant")"
 author_name_opt="$(json_opt author_name "Home Assistant")"
 also_dl_opt="$(json_opt also_download_on_save "false")"
 

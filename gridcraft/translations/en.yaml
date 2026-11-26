@@ -8,7 +8,7 @@ configuration:
     description: "Directory on Home Assistant where GridCraft workbooks are saved (default: /share/gridcraft). Must be under /share, /config, or /media."
   default_language:
     name: "Default Interface Language"
-    description: "Initial GridCraft interface language applied on first visit (default: auto, which uses English for CJK browsers because GridCraft WebAssembly does not bundle CJK fonts yet)."
+    description: "Initial GridCraft interface language applied on first visit (default: zh-hant for Taiwan Traditional Chinese with Excel terminology and embedded Noto Sans TC font)."
   author_name:
     name: "Default Author Name"
     description: "Author name used for new workbooks, notes, and comments in GridCraft."

@@ -23,13 +23,13 @@ map:
 options:
   tz: "Asia/Taipei"
   storage_dir: "/share/gridcraft"
-  default_language: "auto"
+  default_language: "zh-hant"
   author_name: "Home Assistant"
   also_download_on_save: false
 schema:
   tz: "str"
   storage_dir: "match(^/(share|config|media)(/.*)?$)"
-  default_language: "list(auto|en|es|de|fr|it|pt|nl|pl|cs|ru|uk|tr|el|ro|vi|sr|zh|ja|ko)"
+  default_language: "list(auto|zh-hant|zh-tw|zh|en|es|de|fr|it|pt|nl|pl|cs|ru|uk|tr|el|ro|vi|sr|ja|ko)"
   author_name: "str"
   also_download_on_save: "bool"
 image: "ghcr.io/s90061/ha-apps-gridcraft"

@@ -14,7 +14,7 @@ from pathlib import Path
 PORT = int(os.environ.get("PORT", "8090"))
 WEB_DIR = Path(os.environ.get("WEB_DIR", "/app/web")).resolve()
 STORAGE_DIR = Path(os.environ.get("STORAGE_DIR", "/share/gridcraft")).resolve()
-DEFAULT_LANGUAGE = os.environ.get("DEFAULT_LANGUAGE", "auto")
+DEFAULT_LANGUAGE = os.environ.get("DEFAULT_LANGUAGE", "zh-hant")
 AUTHOR_NAME = os.environ.get("AUTHOR_NAME", "Home Assistant")
 ALSO_DOWNLOAD_ON_SAVE = os.environ.get("ALSO_DOWNLOAD_ON_SAVE", "false").lower() == "true"
 GRIDCRAFT_VERSION = os.environ.get("GRIDCRAFT_VERSION", "0.19.1")

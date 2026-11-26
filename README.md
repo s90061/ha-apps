@@ -63,7 +63,7 @@
 ![Supports aarch64 Architecture][aarch64-shield]
 ![Supports amd64 Architecture][amd64-shield]
 
-封裝純 Rust 開源試算表 [`storytold/gridcraft`](https://github.com/storytold/gridcraft)（`v0.19.1` WebAssembly + WebGPU/WebGL2），提供完整 Ribbon 介面、500+ 公式函數（動態陣列、`LET`、`LAMBDA`、`XLOOKUP`）、樞紐分析表、17 種圖表、條件格式與 `.xlsx` / `.csv` / `.tsv` / `.xls` / `.xlsb` / `.ods` / `.pdf` 支援；所有運算與渲染皆於瀏覽器端完成（樹莓派 0% CPU 負載），並整合 **HA 伺服器雲端試算表庫（`/share/gridcraft`）** 與本機電腦上下載雙模式。
+封裝純 Rust 開源試算表 [`storytold/gridcraft`](https://github.com/storytold/gridcraft)（`v0.19.1` WebAssembly + WebGPU/WebGL2），內建**台灣繁體中文（對齊 Excel 繁體中文用字）與思源黑體台灣繁體字型（Noto Sans TC）**，提供完整 Ribbon 介面、500+ 公式函數（動態陣列、`LET`、`LAMBDA`、`XLOOKUP`）、樞紐分析表、17 種圖表、條件式格式與 `.xlsx` / `.csv` / `.tsv` / `.xls` / `.xlsb` / `.ods` / `.pdf` 支援；所有運算與渲染皆於瀏覽器端完成（樹莓派 0% CPU 負載），並整合 **HA 伺服器雲端試算表庫（`/share/gridcraft`）** 與本機電腦上下載雙模式。
 
 ### 開發與維護規範（防呆說明）
 
@@ -97,7 +97,7 @@ A public multi-app repository compliant with Home Assistant Supervisor standards
 * **[PiStream](./pistream)** — Lightweight Raspberry Pi 5 media server (`aarch64`) with HTTP 206 Direct Play, zero-copy Remux, sliding-window HLS transcoding, HA Ingress + direct port `8080`, and read-only `/media` & `/share` integration.
 * **[WordCraft](./wordcraft)** — Pure-Rust word processor (`storytold/wordcraft` `v0.18.1`, `aarch64` & `amd64`) running via WebAssembly (`WebGPU` / `WebGL2`) with integrated Home Assistant server document library (`/share/wordcraft`) and local computer upload/download.
 * **[PdfCraft](./pdfcraft)** — Pure-Rust PDF reader, editor, and ONNX OCR tool (`storytold/pdfcraft` `v0.21.1`, `aarch64` & `amd64`) running via WebAssembly (`WebGL`) with integrated Home Assistant server PDF library (`/share/pdfcraft`) and local computer upload/download.
-* **[GridCraft](./gridcraft)** — Pure-Rust spreadsheet (`storytold/gridcraft` `v0.19.1`, `aarch64` & `amd64`) running via WebAssembly (`WebGPU` / `WebGL2`) with integrated Home Assistant server workbook library (`/share/gridcraft`) and local computer upload/download.
+* **[GridCraft](./gridcraft)** — Pure-Rust spreadsheet (`storytold/gridcraft` `v0.19.1`, `aarch64` & `amd64`) running via WebAssembly (`WebGPU` / `WebGL2`) with Taiwan Traditional Chinese Excel localization, embedded Noto Sans TC font, integrated Home Assistant server workbook library (`/share/gridcraft`), and local computer upload/download.
 
 ### Adding a New App
 

@@ -1,7 +1,51 @@
+FROM docker.io/library/rust:1.95-bookworm AS builder
+
+ARG GRIDCRAFT_VERSION="0.19.1"
+ARG GRIDCRAFT_SRC_SHA256="4adb7b981de97f31c61e5be67ac7b2bcd84e2559647b5c8c39561bbcce199c5e"
+ARG TRUNK_VERSION="0.22.2"
+ARG TRUNK_X86_64_SHA256="26fca8a9952e46cd7d8b8b9a2e2c1786c090fc14b8e10b6678ab4d0f9f1a385f"
+ARG TRUNK_AARCH64_SHA256="be7b50f2d24e9cfbaea5551be2abf3fbabac10412113213a8efe94448e514414"
+ARG NOTO_TC_COMMIT="f8d157532fbfaeda587e826d4cd5b21a49186f7c"
+ARG NOTO_TC_SHA256="5bab0cb3c1cf89dde07c4a95a4054b195afbcfe784d69d75c340780712237537"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl git python3 && \
+    rm -rf /var/lib/apt/lists/* && \
+    rustup target add wasm32-unknown-unknown
+
+RUN arch="$(uname -m)" && \
+    case "${arch}" in \
+        x86_64)  trunk_target="x86_64-unknown-linux-gnu";  trunk_sha="${TRUNK_X86_64_SHA256}" ;; \
+        aarch64) trunk_target="aarch64-unknown-linux-gnu"; trunk_sha="${TRUNK_AARCH64_SHA256}" ;; \
+        *) echo "Unsupported builder arch: ${arch}" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL -o /tmp/trunk.tar.gz \
+        "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/trunk-${trunk_target}.tar.gz" && \
+    echo "${trunk_sha}  /tmp/trunk.tar.gz" | sha256sum -c - && \
+    tar -xzf /tmp/trunk.tar.gz -C /usr/local/bin trunk && \
+    chmod a+x /usr/local/bin/trunk && \
+    rm -f /tmp/trunk.tar.gz
+
+RUN mkdir -p /build/fonts /build/dist && \
+    curl -fsSL -o /build/fonts/NotoSansTC-Regular.otf \
+        "https://raw.githubusercontent.com/notofonts/noto-cjk/${NOTO_TC_COMMIT}/Sans/SubsetOTF/TC/NotoSansTC-Regular.otf" && \
+    echo "${NOTO_TC_SHA256}  /build/fonts/NotoSansTC-Regular.otf" | sha256sum -c - && \
+    curl -fsSL -o /tmp/gridcraft-src.tar.gz \
+        "https://github.com/storytold/gridcraft/archive/refs/tags/v${GRIDCRAFT_VERSION}.tar.gz" && \
+    echo "${GRIDCRAFT_SRC_SHA256}  /tmp/gridcraft-src.tar.gz" | sha256sum -c - && \
+    tar -xzf /tmp/gridcraft-src.tar.gz -C /build && \
+    mv "/build/gridcraft-${GRIDCRAFT_VERSION}" /build/gridcraft && \
+    rm -f /tmp/gridcraft-src.tar.gz
+
+COPY patches /build/patches
+
+RUN python3 /build/patches/apply-tw-patch.py /build/gridcraft /build/patches /build/fonts/NotoSansTC-Regular.otf && \
+    cd /build/gridcraft/apps/gridcraft-web && \
+    trunk build --release --dist /build/dist --public-url ./
+
 FROM docker.io/library/alpine:3.21
 
 ARG GRIDCRAFT_VERSION="0.19.1"
-ARG GRIDCRAFT_WEB_SHA256="48c5d1b101befebb3c5ba3b7a14914f01c3207934813ed07dc4251b7ae116a78"
 
 ENV GRIDCRAFT_VERSION="${GRIDCRAFT_VERSION}" \
     PYTHONUNBUFFERED="1"
@@ -13,16 +57,10 @@ RUN apk add --no-cache \
         gzip \
         jq \
         python3 \
-        tzdata \
-        unzip && \
-    mkdir -p /app/web /share/gridcraft /config && \
-    curl -fsSL -o /tmp/gridcraft-web.zip \
-        "https://github.com/storytold/gridcraft/releases/download/v${GRIDCRAFT_VERSION}/gridcraft-web-${GRIDCRAFT_VERSION}.zip" && \
-    echo "${GRIDCRAFT_WEB_SHA256}  /tmp/gridcraft-web.zip" | sha256sum -c - && \
-    unzip -q /tmp/gridcraft-web.zip -d /tmp/gc && \
-    cp -R "/tmp/gc/gridcraft-web-${GRIDCRAFT_VERSION}/." /app/web/ && \
-    rm -rf /tmp/gridcraft-web.zip /tmp/gc
+        tzdata && \
+    mkdir -p /app/web /share/gridcraft /config
 
+COPY --from=builder /build/dist/. /app/web/
 COPY rootfs /
 
 RUN cp /app/ha-bridge.css /app/ha-bridge.js /app/web/ && \
@@ -41,6 +79,6 @@ ENTRYPOINT ["/usr/local/bin/ha-entrypoint.sh"]
 
 LABEL \
     org.opencontainers.image.title="Home Assistant App: GridCraft" \
-    org.opencontainers.image.description="Open-source pure-Rust spreadsheet (.xlsx/.csv/.tsv/.xls/.xlsb/.ods) via WebAssembly with Home Assistant server storage." \
+    org.opencontainers.image.description="Open-source pure-Rust spreadsheet (.xlsx/.csv/.tsv/.xls/.xlsb/.ods) via WebAssembly with Taiwan Traditional Chinese Excel localization and Home Assistant server storage." \
     org.opencontainers.image.source="https://github.com/s90061/ha-apps" \
     org.opencontainers.image.licenses="MIT OR Apache-2.0"

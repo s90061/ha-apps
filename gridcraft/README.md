@@ -5,6 +5,7 @@ Open-source pure-Rust spreadsheet ([`storytold/gridcraft`](https://github.com/st
 ## Features
 
 - **Full GridCraft Engine in Browser**: Ribbon interface, formula bar, 500+ worksheet functions (dynamic arrays, `LET`, `LAMBDA`, `XLOOKUP`), Pivot Tables, 17 chart types, conditional formatting, sparklines, tables, AutoFilter, Page Break Preview, and `.xlsx` / `.xlsm` / `.xls` / `.xlsb` / `.ods` / `.csv` / `.tsv` / `.pdf` support.
+- **Taiwan Traditional Chinese Excel UI & Noto Sans TC Font**: Includes a complete `zh-tw` / `zh-hant` translation catalog following Microsoft Excel (Taiwan) terminology and embeds **Noto Sans TC Regular** directly in the WebAssembly build for crisp Chinese UI and cell rendering.
 - **Home Assistant Server Workbook Library (`/share/gridcraft`)**: Save directly to Home Assistant with `Ctrl+S` (**💾 存至 HA**), browse/open/rename/delete server workbooks from **📂 HA 伺服器試算表庫**, and optionally download to your local device at the same time.
 - **Home Assistant Ingress & Direct Port (`8090/tcp`)**: Works seamlessly inside the Home Assistant sidebar on desktop and mobile/tablet browsers.
 - **Supported Architectures**: `aarch64`, `amd64`.

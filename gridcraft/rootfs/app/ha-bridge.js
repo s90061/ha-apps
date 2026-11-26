@@ -4,13 +4,26 @@
   const canvas = document.getElementById("gridcraft_canvas");
   if (!canvas) return;
 
-  // Apply ?author= synchronously from /api/config.js BEFORE wasm init() runs
+  // Apply ?author= and first-visit ?lang= synchronously from /api/config.js BEFORE wasm init() runs
   const bootConfig = window.__HA_GRIDCRAFT_CONFIG__ || null;
-  if (bootConfig && bootConfig.author_name) {
+  if (bootConfig) {
     try {
       const curUrl = new URL(window.location.href);
-      if (!curUrl.searchParams.has("author")) {
+      let urlChanged = false;
+      if (bootConfig.author_name && !curUrl.searchParams.has("author")) {
         curUrl.searchParams.set("author", bootConfig.author_name);
+        urlChanged = true;
+      }
+      if (
+        bootConfig.default_language &&
+        bootConfig.default_language !== "auto" &&
+        !localStorage.getItem("gridcraft.ui") &&
+        !curUrl.searchParams.has("lang")
+      ) {
+        curUrl.searchParams.set("lang", bootConfig.default_language);
+        urlChanged = true;
+      }
+      if (urlChanged) {
         window.history.replaceState(null, "", curUrl.toString());
       }
     } catch {
