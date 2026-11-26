@@ -1,10 +1,10 @@
-FROM docker.io/library/rust:1.95-bookworm AS builder
+FROM docker.io/library/rust:1.95-trixie AS builder
 
 ARG GRIDCRAFT_VERSION="0.19.1"
 ARG GRIDCRAFT_SRC_SHA256="4adb7b981de97f31c61e5be67ac7b2bcd84e2559647b5c8c39561bbcce199c5e"
 ARG TRUNK_VERSION="0.22.2"
-ARG TRUNK_X86_64_SHA256="26fca8a9952e46cd7d8b8b9a2e2c1786c090fc14b8e10b6678ab4d0f9f1a385f"
-ARG TRUNK_AARCH64_SHA256="be7b50f2d24e9cfbaea5551be2abf3fbabac10412113213a8efe94448e514414"
+ARG TRUNK_X86_64_SHA256="4a90216d93c553f3d8b7401fce0dee588e0fb1eb1c6a379ebac81fabe820f25b"
+ARG TRUNK_AARCH64_SHA256="3485963cc854763d098a9702b5c98834fa7bfed7240a457ef00a5612b403c9e1"
 ARG NOTO_TC_COMMIT="f8d157532fbfaeda587e826d4cd5b21a49186f7c"
 ARG NOTO_TC_SHA256="5bab0cb3c1cf89dde07c4a95a4054b195afbcfe784d69d75c340780712237537"
 
@@ -15,8 +15,8 @@ RUN apt-get update && \
 
 RUN arch="$(uname -m)" && \
     case "${arch}" in \
-        x86_64)  trunk_target="x86_64-unknown-linux-gnu";  trunk_sha="${TRUNK_X86_64_SHA256}" ;; \
-        aarch64) trunk_target="aarch64-unknown-linux-gnu"; trunk_sha="${TRUNK_AARCH64_SHA256}" ;; \
+        x86_64)  trunk_target="x86_64-unknown-linux-musl";  trunk_sha="${TRUNK_X86_64_SHA256}" ;; \
+        aarch64) trunk_target="aarch64-unknown-linux-musl"; trunk_sha="${TRUNK_AARCH64_SHA256}" ;; \
         *) echo "Unsupported builder arch: ${arch}" >&2; exit 1 ;; \
     esac && \
     curl -fsSL -o /tmp/trunk.tar.gz \
