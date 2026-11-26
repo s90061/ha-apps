@@ -1,0 +1,19 @@
+---
+configuration:
+  tz:
+    name: "Timezone"
+    description: "Container timezone (for example: Asia/Taipei, UTC)."
+  storage_dir:
+    name: "Server Spreadsheet Directory"
+    description: "Directory on Home Assistant where GridCraft workbooks are saved (default: /share/gridcraft). Must be under /share, /config, or /media."
+  default_language:
+    name: "Default Interface Language"
+    description: "Initial GridCraft interface language applied on first visit (default: auto, which uses English for CJK browsers because GridCraft WebAssembly does not bundle CJK fonts yet)."
+  author_name:
+    name: "Default Author Name"
+    description: "Author name used for new workbooks, notes, and comments in GridCraft."
+  also_download_on_save:
+    name: "Also Download to Local Computer on Save"
+    description: "When enabled, saving or exporting in GridCraft both writes the file to the Home Assistant server directory and triggers a browser download to your local device."
+network:
+  8090/tcp: "Direct GridCraft Web UI HTTP port"
